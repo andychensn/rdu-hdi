@@ -48,11 +48,12 @@ config/
 launch/
   control_plane.sh / gpu_prefill.sh / rdu_decode.sh / rdu_inner.sh
 scripts/
-  build_gpu_venv.sh  — UCX + NIXL + .venv_gpu  (~30 min on H200)
-  build_rdu_venv.sh  — .venv_rdu on s339 via snrdu  (~10 min)
-  fetch_vendor.sh    — etcd + nats-server (SHA256-verified from GitHub releases)
-  fetch_rdu_wheels.sh — vllm CPU wheel + nixl-pathb + dynamo-runtime
-  benchmark.sh       — wrapper for InferenceX/benchmark_serving.py
+  build_gpu_venv.sh       — UCX + NIXL + .venv_gpu  (~30 min on H200)
+  build_rdu_ucx_nixl.sh  — two-phase UCX/NIXL build for s339 (no internet)
+  build_rdu_venv.sh       — .venv_rdu on s339 via snrdu  (~10 min)
+  fetch_vendor.sh         — etcd + nats-server (SHA256-verified from GitHub releases)
+  fetch_rdu_wheels.sh     — vllm CPU wheel + nixl-pathb + dynamo-runtime
+  benchmark.sh            — wrapper for InferenceX/benchmark_serving.py
   build_vllm_cpu_wheel.sh / test_*.sh
 docs/
   quickstart.md   — new-member setup guide
