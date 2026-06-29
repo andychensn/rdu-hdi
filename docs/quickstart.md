@@ -63,20 +63,7 @@ Downloads etcd and nats-server from official GitHub releases and verifies SHA256
 bash "$REPO/scripts/fetch_vendor.sh"
 ```
 
-### 3. Fetch RDU wheels (~2 min, needs internet + internal NFS)
-
-Downloads vllm CPU wheel and ai-dynamo-runtime from public sources.
-Copies the nixl-pathb wheel from the SambaNova internal cluster (NFS).
-
-```bash
-bash "$REPO/scripts/fetch_rdu_wheels.sh"
-```
-
-> **nixl-pathb wheel** — SambaNova-internal Broadcom UCX build for bnxt_re NICs.
-> Located at `/import/snvm-sc-scratch1/guoyaof/wheels/` on the SN cluster.
-> If that path is missing: contact guoyaof or rebuild from `andychensn/nixl@sn/rdu-working`.
-
-### 4. Build GPU venv (~30 min on H200, needs CUDA 13.x + autotools)
+### 3. Build GPU venv (~30 min on H200, needs CUDA 13.x + autotools)
 
 ```bash
 srun -p gpuonly -w sc3-c127 --gres=gpu:4 -c 16 --mem=65536 -t 01:30:00 \
@@ -86,16 +73,16 @@ srun -p gpuonly -w sc3-c127 --gres=gpu:4 -c 16 --mem=65536 -t 01:30:00 \
 > Uses sc3-c127 (not c129) because `sudo docker` works there if needed for Docker builds.
 > Clones UCX@`$UCX_COMMIT` and NIXL@`$NIXL_COMMIT` — both public on github.com.
 
-### 5. Build RDU UCX + NIXL wheel (~15 min)
+### 4. Build RDU UCX + NIXL + wheels (~15 min)
 
-Builds UCX (no CUDA, bnxt_re verbs) and NIXL pathb wheel from source.
-**Two phases** because s339 has no internet — sources must be fetched first from the login node.
+s339 has no internet, so everything must be fetched first from the login node.
+`--fetch-only` clones UCX/NIXL sources **and** downloads the vllm/dynamo-runtime wheels to `wheelhouse/`.
 
 ```bash
-# Phase 1: fetch sources to NFS (login node, needs internet, ~2 min)
+# Phase 1: fetch all sources and wheels (login node, needs internet, ~3 min)
 bash "$REPO/scripts/build_rdu_ucx_nixl.sh" --fetch-only
 
-# Phase 2: compile on s339 (uses NFS clone, no internet needed, ~13 min)
+# Phase 2: compile UCX + NIXL on s339 (no internet needed, ~13 min)
 source "$REPO/config/cluster.env"
 snrdu run -sp zd3 --qos 5 --nodelist sc3-s339 --allow-local-lib-python \
     --reservation no_sf_catchup_demos --pef "$PEF" --timeout 00:30:00 \
@@ -105,9 +92,9 @@ snrdu run -sp zd3 --qos 5 --nodelist sc3-s339 --allow-local-lib-python \
 tail -f "$REPO/logs/build_rdu_ucx_nixl.log"
 ```
 
-Outputs: `rdu-ucx-install/` and `wheelhouse/nixl_cu12-*cp311*.whl`.
+Outputs: `rdu-ucx-install/`, `wheelhouse/nixl_cu12-*cp311*.whl`, `wheelhouse/vllm-*.whl`, `wheelhouse/ai_dynamo_runtime-*.whl`.
 
-### 6. Build RDU venv (~10 min on sc3-s339)
+### 5. Build RDU venv (~10 min on sc3-s339)
 
 ```bash
 # $PEF already loaded from cluster.env above
@@ -205,7 +192,7 @@ scancel $(squeue -u $USER -h -o '%i')
 | benchmark tooling | `SemiAnalysisAI/InferenceX@37505e11` | ✅ |
 | etcd 3.5.15 | GitHub releases (SHA256-verified) | ✅ |
 | nats-server 2.10.28 | GitHub releases (SHA256-verified) | ✅ |
-| nixl-pathb wheel | Built from `andychensn/nixl@sn/rdu-working` by Step 5 | ✅ |
+| nixl-pathb wheel | Built from `andychensn/nixl@sn/rdu-working` by Step 4 | ✅ |
 | BAR2 runtime (s339) | guoyaof/jayr NFS paths | ⚠️ internal |
 | Model weights | `/import/ml-sc-scratch6/yund/...` | ⚠️ internal NFS |
 | PEF file | `/import/ml-sc-scratch4/jayr/...` | ⚠️ internal NFS |

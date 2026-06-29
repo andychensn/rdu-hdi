@@ -34,11 +34,12 @@ PY=/opt/sambanova/bin/python3.11
 
 MODE="${1:-both}"   # --fetch-only | --build-only | both
 
-# ── Phase 1: Clone sources to NFS (login node, needs internet) ───────────────
+# ── Phase 1: Fetch all internet resources (login node) ───────────────────────
 fetch_sources() {
-    echo "=== Phase 1: Fetching UCX and NIXL sources to $SRC_DIR ==="
-    mkdir -p "$SRC_DIR"
+    echo "=== Phase 1: Fetching sources and wheels (login node, needs internet) ==="
+    mkdir -p "$SRC_DIR" "$WHEEL_OUT"
 
+    # UCX source
     if [ ! -d "$SRC_DIR/ucx/.git" ]; then
         echo "  Cloning andychensn/ucx@$UCX_COMMIT..."
         git clone --depth=200 --branch "$UCX_BRANCH" \
@@ -46,9 +47,10 @@ fetch_sources() {
         git -C "$SRC_DIR/ucx" checkout "$UCX_COMMIT"
         echo "  UCX cloned ✅"
     else
-        echo "  UCX already present in $SRC_DIR/ucx"
+        echo "  UCX already present"
     fi
 
+    # NIXL source
     if [ ! -d "$SRC_DIR/nixl/.git" ]; then
         echo "  Cloning andychensn/nixl@$NIXL_COMMIT..."
         git clone --depth=50 --branch "$NIXL_BRANCH" \
@@ -56,7 +58,31 @@ fetch_sources() {
         git -C "$SRC_DIR/nixl" checkout "$NIXL_COMMIT"
         echo "  NIXL cloned ✅"
     else
-        echo "  NIXL already present in $SRC_DIR/nixl"
+        echo "  NIXL already present"
+    fi
+
+    # vllm CPU wheel — downloaded on login node, installed on s339 (no internet there)
+    # Rename manylinux→linux_x86_64 to bypass glibc 2.31 check on RHEL8/s339
+    VLLM_WHL=$(find "$WHEEL_OUT" -name "vllm-*linux_x86_64.whl" 2>/dev/null | head -1 || true)
+    if [ -z "$VLLM_WHL" ]; then
+        echo "  Downloading vllm==$VLLM_VERSION wheel..."
+        pip download "vllm==$VLLM_VERSION" --no-deps --dest "$WHEEL_OUT" \
+            --python-version 311 --platform manylinux_2_31_x86_64 2>&1 | tail -3
+        MANYLINUX="$WHEEL_OUT/vllm-${VLLM_VERSION}-cp38-abi3-manylinux_2_31_x86_64.whl"
+        [ -f "$MANYLINUX" ] && mv "$MANYLINUX" "$WHEEL_OUT/vllm-${VLLM_VERSION}-cp38-abi3-linux_x86_64.whl"
+        echo "  vllm wheel ✅"
+    else
+        echo "  vllm wheel already present: $VLLM_WHL"
+    fi
+
+    # ai-dynamo-runtime wheel
+    if ! find "$WHEEL_OUT" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | grep -q .; then
+        echo "  Downloading ai-dynamo-runtime==$DYNAMO_VERSION wheel..."
+        pip download "ai-dynamo-runtime==$DYNAMO_VERSION" --only-binary=:all: \
+            --dest "$WHEEL_OUT" 2>&1 | tail -3
+        echo "  ai-dynamo-runtime wheel ✅"
+    else
+        echo "  ai-dynamo-runtime wheel already present"
     fi
 }
 

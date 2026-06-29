@@ -18,25 +18,25 @@ PY=/opt/sambanova/bin/python3.11
 VENV=$REPO_ROOT/.venv_rdu
 WHEELHOUSE=$REPO_ROOT/wheelhouse
 
-# Paths to local artifacts (NFS-accessible from s339)
-# Prefer the generic-platform wheel (linux_x86_64) that works on older glibc (RHEL8/s339)
-VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*linux_x86_64.whl" 2>/dev/null | head -1 || \
-               find "$WHEELHOUSE" -name "vllm-*.whl" 2>/dev/null | head -1 || true)
-# Accept wheels built from source (nixl_cu12-*cp311*.whl) or NFS copy (nixl-*pathb*.whl)
-NIXL_PATHB_WHL=$(find "$WHEELHOUSE" \( -name "nixl_cu12*cp311*.whl" -o -name "nixl-*pathb*.whl" \) 2>/dev/null | head -1 || true)
-DYNAMO_WHL=$(ls "$WHEELHOUSE"/ai_dynamo_runtime-*.whl 2>/dev/null | head -1)
+# All wheels must be pre-fetched by: bash scripts/build_rdu_ucx_nixl.sh --fetch-only
+# s339 has no internet — nothing is downloaded here.
+VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*linux_x86_64.whl" 2>/dev/null | head -1 || true)
+NIXL_WHL=$(find "$WHEELHOUSE" -name "nixl_cu12*cp311*.whl" 2>/dev/null | head -1 || true)
+DYNAMO_WHL=$(find "$WHEELHOUSE" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | head -1 || true)
 VLLM_RDU_SRC=$REPO_ROOT/vllm-rdu  # local clone of andychensn/vllm-rdu
 
 echo "=== rdu-hdi RDU venv build on $(hostname) $(date) ==="
 echo "    Python: $($PY --version)"
 echo "    VENV: $VENV"
-[ -n "$VLLM_CPU_WHL" ] && echo "    vllm wheel: $VLLM_CPU_WHL" || echo "    ERROR: no vllm wheel in $WHEELHOUSE"
-[ -n "$NIXL_PATHB_WHL" ] && echo "    nixl wheel: $NIXL_PATHB_WHL" || echo "    ERROR: no nixl-pathb wheel in $WHEELHOUSE"
 
-# Validate
-[ -x "$PY" ] || { echo "ERROR: $PY not found — must run on RDU node"; exit 1; }
-[ -n "$VLLM_CPU_WHL" ] || { echo "ERROR: no vllm wheel in $WHEELHOUSE — run scripts/fetch_rdu_wheels.sh first"; exit 1; }
-[ -n "$NIXL_PATHB_WHL" ] || { echo "ERROR: no nixl wheel found in $WHEELHOUSE"; echo "  Run: bash scripts/build_rdu_ucx_nixl.sh --fetch-only  (login node)"; echo "  Then: snrdu run ... -- bash scripts/build_rdu_ucx_nixl.sh --build-only  (s339)"; exit 1; }
+# Validate — all wheels must exist (fetched by build_rdu_ucx_nixl.sh --fetch-only)
+[ -x "$PY" ]           || { echo "ERROR: $PY not found — must run on RDU node"; exit 1; }
+[ -n "$VLLM_CPU_WHL" ] || { echo "ERROR: no vllm wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; exit 1; }
+[ -n "$NIXL_WHL" ]     || { echo "ERROR: no nixl wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; echo "  Then on s339: bash scripts/build_rdu_ucx_nixl.sh --build-only"; exit 1; }
+[ -n "$DYNAMO_WHL" ]   || { echo "ERROR: no ai-dynamo-runtime wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; exit 1; }
+echo "    vllm:   $VLLM_CPU_WHL"
+echo "    nixl:   $NIXL_WHL"
+echo "    dynamo: $DYNAMO_WHL"
 
 # ── Create venv ───────────────────────────────────────────────────────────────
 echo "=== Creating venv ==="
@@ -90,22 +90,16 @@ pip install -q "transformers==$RDU_TRANSFORMERS_VERSION"
 
 # ── Dynamo runtime ────────────────────────────────────────────────────────────
 echo "=== ai-dynamo-runtime ==="
-if [ -n "$DYNAMO_WHL" ]; then
-    pip install -q "$DYNAMO_WHL"
-else
-    # Try PyPI (may not be available from s339)
-    pip install -q "ai-dynamo-runtime==$DYNAMO_VERSION" 2>/dev/null || \
-        echo "WARNING: could not install ai-dynamo-runtime — add wheel to wheelhouse"
-fi
+pip install -q "$DYNAMO_WHL"
 
 # ── Dynamo Python deps ────────────────────────────────────────────────────────
 echo "=== Dynamo Python deps ==="
 pip install -q aiohttp msgpack msgspec pyzmq sortedcontainers uvloop cbor2 diskcache 2>/dev/null || \
-    echo "WARNING: some Dynamo deps may be missing (no internet on s339)"
+    echo "WARNING: some Dynamo deps unavailable (no internet on s339) — may already be in system site-packages"
 
-# ── NIXL (pathb: Broadcom UCX for bnxt_re) ───────────────────────────────────
-echo "=== nixl (pathb wheel) ==="
-pip install -q "$NIXL_PATHB_WHL"
+# ── NIXL (built from source by build_rdu_ucx_nixl.sh --build-only) ───────────
+echo "=== nixl ==="
+pip install -q "$NIXL_WHL"
 
 # ── vllm-rdu plugin ───────────────────────────────────────────────────────────
 echo "=== vllm-rdu (local editable install) ==="
