@@ -1,0 +1,32 @@
+# Build artifacts
+ucx-install/
+rdu-ucx-install/
+.venv_gpu/
+.venv_rdu/
+.rdu_cache/
+.etcd_data/
+build/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Wheels (fetch/build via scripts/)
+wheelhouse/
+
+# Results
+benchmark_results/
+
+# Runtime-only repos — cloned at setup time (see docs/quickstart.md Step 1)
+vllm-rdu/
+dynamo_src/
+dynamo_src_rdu/
+InferenceX/
+vendor/bin/
+rdu-build-src/
+
+# Cluster-specific local notes
+docs/local/
