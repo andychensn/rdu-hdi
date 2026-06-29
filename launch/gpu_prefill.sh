@@ -27,6 +27,8 @@ if [[ "${1:-}" == "--inner" ]]; then
     PYVER=$(ls "$GPU_VENV/lib/" | grep "python3\." | head -1)
     CUDA12_LIBS="$GPU_VENV/lib/$PYVER/site-packages/nvidia/cuda_runtime/lib"
     export LD_LIBRARY_PATH="$CUDA12_LIBS:$UCX_INSTALL/lib:$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+    # Add venv bin to PATH so triton/torch.compile can invoke ninja as subprocess
+    export PATH="$GPU_VENV/bin:$PATH"
 
     echo "=== GPU prefill on $(hostname) ==="
     echo "    venv: $GPU_VENV"
