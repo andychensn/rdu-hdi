@@ -198,11 +198,15 @@ build_on_rdu_node() {
         export PKG_CONFIG_PATH="$UCX_INSTALL/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
         cd "$NIXL_SRC"
+        # GCC 8 (RHEL8) needs:
+        #   -Wno-attributes: [[likely]]/[[unlikely]] are C++20, treated as errors by -Werror
+        #   -lstdc++fs: std::filesystem is a separate lib before GCC 9
+        # Meson picks these up from env vars (multiple --config-settings=setup-args= overrides each other)
+        CXXFLAGS="-Wno-attributes" \
+        LDFLAGS="-lstdc++fs" \
         "$PY" -m pip wheel . --no-deps --no-build-isolation -w "$WHEEL_OUT" \
             --config-settings=setup-args="-Ducx_path=$UCX_INSTALL" \
-            --config-settings=setup-args="-Denable_plugins=UCX" \
-            --config-settings=setup-args="-Dcpp_args=-Wno-attributes" \
-            --config-settings=setup-args="-Dcpp_link_args=-lstdc++fs"
+            --config-settings=setup-args="-Denable_plugins=UCX"
         cd "$REPO_ROOT"
 
         NIXL_WHL=$(find "$WHEEL_OUT" -name "nixl*.whl" -newer "$BUILD_TMP" | head -1 || true)
