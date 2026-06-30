@@ -91,6 +91,8 @@ COPY --from=builder /tmp/nixl-wheels /tmp/nixl-wheels
 
 # Set LD_LIBRARY_PATH before pip installs so NIXL can find UCX shared libs at import time
 ENV LD_LIBRARY_PATH=/opt/ucx/lib:${LD_LIBRARY_PATH:-}
+# Restrict UCX to only load our transport modules (no IB) — prevents system UCX from loading libuct_ib
+ENV UCX_MODULE_DIR=/opt/ucx/lib/ucx
 
 # Install NIXL wheel (explicit variable avoids silent multi-match on glob)
 RUN NIXL_WHL=$(ls /tmp/nixl-wheels/nixl_cu12-*.whl | head -1) && \
