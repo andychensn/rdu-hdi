@@ -185,6 +185,7 @@ scancel $(squeue -u $USER -h -o '%i')
 | etcd 3.5.15 | GitHub releases (SHA256-verified) | ✅ |
 | nats-server 2.10.28 | GitHub releases (SHA256-verified) | ✅ |
 | nixl-pathb wheel | Built from `andychensn/nixl@sn/rdu-working` by Step 4 | ✅ |
+| vllm nixl_connector patch | `patches/vllm_nixl_connector.patch` (applied by `build_gpu_venv.sh`) | ✅ |
 | BAR2 runtime (s339) | guoyaof/jayr NFS paths | ⚠️ internal |
 | Model weights | `/import/ml-sc-scratch6/yund/...` | ⚠️ internal NFS |
 | PEF file | `/import/ml-sc-scratch4/jayr/...` | ⚠️ internal NFS |
@@ -195,4 +196,5 @@ All version numbers and commit SHAs are in `config/versions.env`.
 
 ## Known gaps
 
-- **RDU venv torch compat**: s339 has `torch 2.2.0+sn` (SambaNova RDU build); vllm 0.16.0 was written against torch 2.4+. Two files crash at import (`torch_utils.py`: missing `infer_schema`; `env_override.py`: torch 2.9 inductor paths). `build_rdu_venv.sh` patches both after install. Long-term fix: build vllm CPU wheel against torch 2.2.x (`scripts/build_vllm_cpu_wheel.sh`).
+- **GPU venv vllm patch** (`patches/vllm_nixl_connector.patch`): vllm 0.16.0 is missing `REGISTER_CONSUMER_MSG` support in `nixl_connector.py` — without it the handshake listener crashes with "unhashable type: dict" when the RDU consumer registers. The fix is tracked in `sambanova/sn_vllm` but we use the stock precompiled wheel (avoids ~45 min CUDA recompile) and apply only this 50-line patch. Applied automatically by `build_gpu_venv.sh`.
+- **RDU venv torch compat**: s339 has `torch 2.2.0+sn` (SambaNova RDU build); vllm 0.16.0 was written against torch 2.4+. Two files crash at import (`torch_utils.py`: missing `infer_schema`; `env_override.py`: torch 2.9 inductor paths). `build_rdu_venv.sh` patches both after install. Long-term fix: build vllm CPU wheel against torch 2.2.x.

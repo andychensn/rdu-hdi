@@ -120,16 +120,20 @@ pip install -q "torch==$TORCH_VERSION" torchvision torchaudio \
 echo "=== Step 4: vllm $VLLM_VERSION ==="
 VLLM_USE_PRECOMPILED=1 pip install -q "vllm==$VLLM_VERSION"
 
-echo "=== Step 4: sn_vllm patch check ==="
-# Official vllm 0.16.0 already includes REGISTER_CONSUMER_MSG (verified 2026-06-28)
+echo "=== Step 4: vllm nixl_connector patch ==="
+# vllm 0.16.0 is missing REGISTER_CONSUMER_MSG support in nixl_connector.py.
+# The fix lives in sambanova/sn_vllm but we use the stock precompiled wheel
+# (avoids ~45 min CUDA recompile) and apply only this 50-line patch instead.
+# Source: diff of vllm-project/vllm@v0.16.0 vs sambanova/sn_vllm@main.
 NIXL_PY=$(find "$VENV" -name "nixl_connector.py" -path "*/kv_connector*" 2>/dev/null | head -1)
-if grep -q "REGISTER_CONSUMER_MSG" "$NIXL_PY" 2>/dev/null; then
-    echo "  REGISTER_CONSUMER_MSG present in official vllm 0.16.0 ✅"
-else
-    echo "ERROR: REGISTER_CONSUMER_MSG not found in nixl_connector.py"
-    echo "  Expected vllm 0.16.0 — check VLLM_VERSION in versions.env"
-    exit 1
-fi
+PATCH="$REPO_ROOT/patches/vllm_nixl_connector.patch"
+[ -f "$PATCH" ] || { echo "ERROR: $PATCH not found"; exit 1; }
+[ -n "$NIXL_PY" ] || { echo "ERROR: nixl_connector.py not found in venv"; exit 1; }
+# patch -p1 expects paths rooted at vllm package dir
+VLLM_SITE=$(python -c "import vllm; import os; print(os.path.dirname(vllm.__file__))")
+patch -p2 -d "$VLLM_SITE" < "$PATCH"
+echo "  nixl_connector patch applied ✅"
+grep -q "REGISTER_CONSUMER_MSG" "$NIXL_PY" || { echo "ERROR: patch did not apply"; exit 1; }
 
 echo "=== Step 4: nixl (custom UCX build) ==="
 export LD_LIBRARY_PATH="$UCX_INSTALL/lib:${LD_LIBRARY_PATH:-}"
