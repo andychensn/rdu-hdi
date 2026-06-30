@@ -13,7 +13,7 @@
 # Run (inside SLURM job on GPU node):
 #   sudo -g docker /usr/bin/cuda-docker-run-wrapper --net=host --rm IMAGE vllm serve ...
 
-ARG VLLM_VERSION=0.16.0
+ARG VLLM_VERSION=v0.16.0
 
 # ── Stage 1: builder — compiles UCX and NIXL wheel ───────────────────────────
 # Uses the same base so CUDA toolkit version matches.
@@ -70,7 +70,7 @@ RUN pip install meson-python pybind11 patchelf pyyaml setuptools build wheel && 
     rm -rf /tmp/nixl-src
 
 # ── Stage 2: final image — stock vllm + UCX libs + NIXL + patch ──────────────
-FROM vllm/vllm-openai:${VLLM_VERSION}
+FROM vllm/vllm-openai:${VLLM_VERSION} AS final
 
 # Copy UCX install (shared libs needed at runtime by NIXL)
 COPY --from=builder /opt/ucx /opt/ucx
@@ -97,14 +97,9 @@ RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__)
     patch -p2 -d "$VLLM_DIR" < /tmp/vllm_nixl_connector.patch && \
     rm /tmp/vllm_nixl_connector.patch
 
-# Validate the image at build time
+# Validate the image at build time (use single-line imports to avoid Dockerfile parser issues)
 RUN python3 -c "import vllm; print('vllm:', vllm.__version__)" && \
-    python3 -c "
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import REGISTER_CONSUMER_MSG
-print('vllm patch: OK')
-" && \
+    python3 -c "import importlib; m=importlib.import_module('vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector'); assert hasattr(m,'REGISTER_CONSUMER_MSG'); print('vllm patch: OK')" && \
     python3 -c "from nixl._api import nixl_agent; print('nixl: OK')" && \
     python3 -c "import dynamo.vllm; print('dynamo.vllm: OK')" && \
     python3 -c "import dynamo.frontend; print('dynamo.frontend: OK')"
-# Note: deep_gemm is baked into the stock vllm image (compiled during image build).
-# We validate it is present but not importable without GPU — verified at runtime via logs.

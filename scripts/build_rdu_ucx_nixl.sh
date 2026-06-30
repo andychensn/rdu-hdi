@@ -65,7 +65,7 @@ fetch_sources() {
     VLLM_WHL=$(find "$WHEEL_OUT" -name "vllm-*linux_x86_64.whl" 2>/dev/null | head -1 || true)
     if [ -z "$VLLM_WHL" ]; then
         echo "  Downloading vllm==$VLLM_VERSION wheel..."
-        pip download "vllm==$VLLM_VERSION" --no-deps --dest "$WHEEL_OUT" \
+        python3.12 -m pip download "vllm==$VLLM_VERSION" --no-deps --dest "$WHEEL_OUT" \
             --python-version 311 --platform manylinux_2_31_x86_64 2>&1 | tail -3
         MANYLINUX="$WHEEL_OUT/vllm-${VLLM_VERSION}-cp38-abi3-manylinux_2_31_x86_64.whl"
         [ -f "$MANYLINUX" ] && mv "$MANYLINUX" "$WHEEL_OUT/vllm-${VLLM_VERSION}-cp38-abi3-linux_x86_64.whl"
@@ -79,7 +79,7 @@ fetch_sources() {
     # pulling vllm/torch as pip dependencies (already installed from wheelhouse).
     if ! find "$WHEEL_OUT" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | grep -q .; then
         echo "  Downloading ai-dynamo-runtime==$DYNAMO_VERSION..."
-        pip download "ai-dynamo-runtime==$DYNAMO_VERSION" --only-binary=:all: --no-deps \
+        python3.12 -m pip download "ai-dynamo-runtime==$DYNAMO_VERSION" --only-binary=:all: --no-deps \
             --dest "$WHEEL_OUT" 2>&1 | tail -2
         echo "  ai-dynamo-runtime wheel ✅"
     else
@@ -87,7 +87,7 @@ fetch_sources() {
     fi
     if ! find "$WHEEL_OUT" -name "ai_dynamo-*.whl" 2>/dev/null | grep -q .; then
         echo "  Downloading ai-dynamo==$DYNAMO_VERSION..."
-        pip download "ai-dynamo==$DYNAMO_VERSION" --only-binary=:all: --no-deps \
+        python3.12 -m pip download "ai-dynamo==$DYNAMO_VERSION" --only-binary=:all: --no-deps \
             --dest "$WHEEL_OUT" 2>&1 | tail -2
         echo "  ai-dynamo wheel ✅"
     else

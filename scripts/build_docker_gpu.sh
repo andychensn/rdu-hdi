@@ -37,7 +37,7 @@ echo "    Dynamo:  $DYNAMO_VERSION"
 echo ""
 
 sudo -g docker /usr/bin/docker-wrapper build \
-    --build-arg VLLM_VERSION="$VLLM_VERSION" \
+    --build-arg VLLM_VERSION="v$VLLM_VERSION" \
     --build-arg UCX_COMMIT="$UCX_COMMIT" \
     --build-arg NIXL_COMMIT="$NIXL_COMMIT" \
     --build-arg DYNAMO_VERSION="$DYNAMO_VERSION" \
