@@ -89,15 +89,6 @@ COPY --from=builder /opt/ucx /opt/ucx
 # Copy NIXL wheel
 COPY --from=builder /tmp/nixl-wheels /tmp/nixl-wheels
 
-# Set LD_LIBRARY_PATH before pip installs so NIXL can find UCX shared libs at import time
-# Replace Ubuntu 22.04's bnxt_re provider (rdmav34) with the GPU node's version (rdmav57).
-# Ubuntu ships rdmav34 which fails the kernel ABI check on these RHEL nodes.
-# The GPU node's rdmav57 works natively — same library, just needs to be the one libibverbs loads.
-COPY .rdma-libs/libbnxt_re-rdmav57.so /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav57.so
-RUN cd /usr/lib/x86_64-linux-gnu/libibverbs/ && \
-    ln -sf libbnxt_re-rdmav57.so libbnxt_re-rdmav34.so && \
-    echo "bnxt_re provider: $(ls -la libbnxt_re-rdmav34.so)"
-
 ENV LD_LIBRARY_PATH=/opt/ucx/lib:${LD_LIBRARY_PATH:-}
 ENV UCX_MODULE_DIR=/opt/ucx/lib/ucx
 
@@ -126,6 +117,14 @@ RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__)
         echo "WARNING: nixl_connector.py not found in vllm package — skipping patch"; \
     fi && \
     rm /tmp/vllm_nixl_connector.patch
+
+# Replace Ubuntu's bnxt_re provider LAST — after all pip installs that might restore rdmav34.
+# The GPU node ships Broadcom's OOT libbnxt_re-rdmav57.so which accepts kernel ABI 8.
+# Ubuntu's inbox rdmav34 only accepts ABI 1 and fails — causing UCX to crash via a broken context.
+COPY .rdma-libs/libbnxt_re-rdmav57.so /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav57.so
+RUN cd /usr/lib/x86_64-linux-gnu/libibverbs/ && \
+    ln -sf libbnxt_re-rdmav57.so libbnxt_re-rdmav34.so && \
+    ls -la libbnxt_re-rdmav34.so
 
 # Validate the image at build time
 RUN python3 -c "import vllm; print('vllm:', vllm.__version__)" && \
