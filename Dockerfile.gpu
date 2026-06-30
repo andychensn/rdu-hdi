@@ -125,9 +125,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         -DCMAKE_INSTALL_LIBDIR=/usr/lib/x86_64-linux-gnu \
         -DNO_MAN_PAGES=1 \
         -B /tmp/rdma-core/build /tmp/rdma-core && \
-    ninja -C /tmp/rdma-core/build bnxt_re && \
-    BNXT_SO=$(find /tmp/rdma-core/build -name "libbnxt_re*.so" | head -1) && \
+    ninja -C /tmp/rdma-core/build && \
+    BNXT_SO=$(find /tmp/rdma-core/build -name "libbnxt_re*.so" 2>/dev/null | head -1) && \
     echo "Built: $BNXT_SO" && \
+    [ -n "$BNXT_SO" ] || { echo "ERROR: libbnxt_re.so not found"; exit 1; } && \
     cp "$BNXT_SO" \
        /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav57.so && \
     ln -sf libbnxt_re-rdmav57.so \
