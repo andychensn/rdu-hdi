@@ -62,7 +62,7 @@ srun -p gpuonly -w sc3-c127 --gres=gpu:4 -c 16 --mem=65536 -t 01:30:00 \
     bash "$REPO/scripts/build_gpu_venv.sh"
 ```
 
-> Uses sc3-c127 (not c129) because `sudo docker` works there if needed for Docker builds.
+> Uses sc3-c127 (not c129) to avoid consuming the RDU-prefill-experiment-test reservation during builds.
 > Clones UCX@`$UCX_COMMIT` and NIXL@`$NIXL_COMMIT` — both public on github.com.
 
 ### 4. Build RDU UCX + NIXL + wheels (~15 min)
@@ -191,6 +191,44 @@ scancel $(squeue -u $USER -h -o '%i')
 | PEF file | `/import/ml-sc-scratch4/jayr/...` | ⚠️ internal NFS |
 
 All version numbers and commit SHAs are in `config/versions.env`.
+
+---
+
+## Running the GPU worker via Docker
+
+The GPU nodes have Docker available via a cluster wrapper that handles SLURM cgroup, GPU passthrough, and NFS mounts. `/import` is automatically mounted inside the container so model weights are accessible without any `-v` flags.
+
+### Command
+
+```bash
+srun -p gpuonly -w sc3-c129 --gres=gpu:4 -c 16 --mem=64G -t 04:00:00 \
+    --reservation RDU-prefill-experiment-test \
+    bash -c 'sudo -g docker /usr/bin/cuda-docker-run-wrapper \
+        --net=host --rm \
+        vllm/vllm-openai:v0.16.0 \
+        vllm serve /import/ml-sc-scratch6/yund/checkpoints/MiniMax-M2.7 \
+        --tensor-parallel-size 4 \
+        --served-model-name MiniMax-M2.7 \
+        --max-model-len 196608 \
+        --gpu-memory-utilization 0.90'
+```
+
+### Notes
+
+- **`sudo -g docker`** sets the primary group to `docker` — required by the wrapper (`sudo cuda-docker-run-wrapper`, not `sudo docker`)
+- **`--net=host`** is required for RoCE RDMA connectivity to the RDU decode node
+- **Docker Hub is accessible** from GPU nodes — `vllm/vllm-openai:v0.16.0` pulls successfully (confirmed on sc3-c128)
+- **`/import` is mounted** automatically as a shared volume — model checkpoints and NFS paths work inside the container as-is
+- **Nodes confirmed working**: sc3-c127, sc3-c128. sc3-c129 uses the `RDU-prefill-experiment-test` reservation.
+- **Volume mounts (`-v`)** are restricted to `$SLURM_TMPDIR` only — use `/import` paths directly instead
+
+### Smoke test
+
+```bash
+srun -p gpuonly -w sc3-c128 --gres=gpu:1 -c 1 --mem=4096 -t 00:05:00 \
+    bash -c 'sudo -g docker /usr/bin/cuda-docker-run-wrapper --net=host --rm \
+        vllm/vllm-openai:v0.16.0 vllm -v'
+```
 
 ---
 
