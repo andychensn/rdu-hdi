@@ -98,14 +98,8 @@ RUN pip install "ai-dynamo[vllm]==${DYNAMO_VERSION}"
 # p2 strips two path components to match the installed package layout.
 COPY patches/vllm_nixl_connector.patch /tmp/
 RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__))") && \
-    patch --forward --batch -p2 -d "$VLLM_DIR" < /tmp/vllm_nixl_connector.patch || \
-    echo "Patch skipped (already applied or not needed)" && \
-    python3 -c "
-import importlib
-m = importlib.import_module('vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector')
-assert hasattr(m, 'REGISTER_CONSUMER_MSG'), 'REGISTER_CONSUMER_MSG missing after patch!'
-print('REGISTER_CONSUMER_MSG: OK')
-" && \
+    (patch --forward --batch -p2 -d "$VLLM_DIR" < /tmp/vllm_nixl_connector.patch || echo "Patch skipped") && \
+    python3 -c "import importlib; m=importlib.import_module('vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector'); assert hasattr(m,'REGISTER_CONSUMER_MSG'), 'REGISTER_CONSUMER_MSG missing'; print('vllm patch: OK')" && \
     rm /tmp/vllm_nixl_connector.patch
 
 # Validate the image at build time (use single-line imports to avoid Dockerfile parser issues)
