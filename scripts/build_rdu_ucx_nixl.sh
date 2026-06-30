@@ -200,7 +200,8 @@ build_on_rdu_node() {
         cd "$NIXL_SRC"
         "$PY" -m pip wheel . --no-deps --no-build-isolation -w "$WHEEL_OUT" \
             --config-settings=setup-args="-Ducx_path=$UCX_INSTALL" \
-            --config-settings=setup-args="-Denable_plugins=UCX"
+            --config-settings=setup-args="-Denable_plugins=UCX" \
+            --config-settings=setup-args="-Dcpp_args=[-Wno-attributes]"
         cd "$REPO_ROOT"
 
         NIXL_WHL=$(find "$WHEEL_OUT" -name "nixl*.whl" -newer "$BUILD_TMP" | head -1 || true)
