@@ -10,57 +10,63 @@ SN40L RDU handles decode, coordinated by NVIDIA Dynamo.
 ## Stack
 
 ```
-andychensn/ucx        ── sn/v1.22 ──► libucx.so  (GPU RoCE RDMA over bnxt_re)
-andychensn/nixl       ── sn/rdu-working ──► nixl wheel
-                                                  │
-vllm 0.16.0 (PyPI)    ──────────────────► GPU prefill (dynamo.vllm)
-                                                  │  NIXL KV transfer
-andychensn/vllm-rdu   ──────────────────► RDU decode (dynamo.vllm)
-                                                  │
-ai-dynamo/dynamo v1.2.1 ────────────────► Dynamo control plane + dynamo.vllm
+vllm/vllm-openai:v0.16.0 (Docker)          GPU prefill (dynamo.vllm)
+  + andychensn/ucx   sn/v1.22    ──────►   │  NIXL KV cache transfer (RoCE RDMA)
+  + andychensn/nixl  sn/rdu-working         │
+  + vllm nixl_connector patch               │
+  + ai-dynamo[vllm] 1.2.1                   │
+                                            │
+andychensn/vllm-rdu (NFS venv) ──────────► RDU decode (dynamo.vllm)
+  + ai-dynamo[vllm] 1.2.1                   │
+  + NIXL (pathb/bnxt_re build)              │
+                                            │
+etcd + NATS + dynamo.frontend ──────────── Control plane (login node)
+  (vendor/bin + .venv_cp)
 ```
 
 All source dependencies are pinned to exact commit SHAs in `config/versions.env`.
-No NFS venv copies. Everything is fetched or built from pinned public sources.
+GPU worker runs as a Docker container; no venv build required on GPU nodes.
 
 ---
 
 ## Setup & Launch
 
-See **[docs/quickstart.md](docs/quickstart.md)** — one-time setup (~45 min) + per-session launch.
+See **[docs/quickstart.md](docs/quickstart.md)** — one-time setup + per-session launch.
 
 ```bash
 # Per-session (after one-time setup):
-bash launch/control_plane.sh          # etcd + NATS + Dynamo frontend
-bash launch/gpu_prefill.sh            # GPU worker (blocks ~10 min)
-source config/cluster.env && bash launch/rdu_decode.sh  # RDU worker (blocks ~12 min)
+bash launch/control_plane.sh                                 # etcd + NATS + Dynamo frontend
+bash launch/gpu_prefill.sh                                   # GPU Docker worker (blocks ~10 min)
+source config/cluster.env && bash launch/rdu_decode.sh       # RDU worker (blocks ~12 min)
 bash launch/control_plane.sh --stop && scancel $(squeue -u $USER -h -o '%i')
 ```
 
 ---
 
-## Repo contents (16 files)
+## Repo contents
 
 ```
 config/
   versions.env    — all commit SHAs and version pins
-  cluster.env     — node names, IPs, reservations, FAST_COE_HOME
+  cluster.env     — node names, IPs, reservations, Docker image tag
+Dockerfile.gpu    — GPU prefill image (vllm base + UCX + NIXL + patch + ai-dynamo)
 launch/
   control_plane.sh / gpu_prefill.sh / rdu_decode.sh / rdu_inner.sh
 scripts/
-  build_gpu_venv.sh       — UCX + NIXL + .venv_gpu  (~30 min on H200)
-  build_rdu_ucx_nixl.sh  — two-phase UCX/NIXL build for s339 (no internet)
-  build_rdu_venv.sh       — .venv_rdu on s339 via snrdu  (~10 min)
-  fetch_vendor.sh         — etcd + nats-server (SHA256-verified from GitHub releases)
-  fetch_rdu_wheels.sh     — vllm CPU wheel + nixl-pathb + dynamo-runtime
-  benchmark.sh            — wrapper for InferenceX/benchmark_serving.py
-  build_vllm_cpu_wheel.sh / test_*.sh
+  build_docker_gpu.sh    — build + push GPU Docker image (login node, ~20 min)
+  build_rdu_ucx_nixl.sh  — fetch + compile UCX/NIXL for RDU venv (two-phase)
+  build_rdu_venv.sh      — build RDU Python venv on s339
+  fetch_vendor.sh        — download etcd + nats-server (SHA256-verified)
+  benchmark.sh           — wrapper for InferenceX/benchmark_serving.py
+  test_*.sh              — import validation scripts
+patches/
+  vllm_nixl_connector.patch  — adds REGISTER_CONSUMER_MSG to vllm 0.16.0
 docs/
   quickstart.md   — new-member setup guide
 ```
 
-Runtime-only (gitignored, set up by quickstart Step 1):
-`dynamo_src/`, `dynamo_src_rdu/`, `vllm-rdu/`, `InferenceX/`, `vendor/bin/`, `.venv_gpu/`, `.venv_rdu/`
+Runtime-only (gitignored, set up by quickstart):
+`.venv_cp/`, `.venv_rdu/`, `.gpu_cache/`, `vllm-rdu/`, `InferenceX/`, `vendor/bin/`
 
 ---
 
@@ -70,14 +76,12 @@ All pins are in `config/versions.env`. Key ones:
 
 | Component | Pin |
 |-----------|-----|
-| vllm | 0.16.0 (official PyPI) |
-| torch | 2.9.1+cu130 |
-| UCX | `andychensn/ucx@e153f2e4` |
-| NIXL | `andychensn/nixl@c2abc770` |
+| vllm Docker base | `vllm/vllm-openai:0.16.0` |
+| GPU image tag | `v0.16.0-rdu-hdi.1` (in `cluster.env`) |
+| UCX | `andychensn/ucx@e153f2e4` (sn/v1.22) |
+| NIXL | `andychensn/nixl@c2abc770` (sn/rdu-working) |
 | vllm-rdu | `andychensn/vllm-rdu@5bc4a563` |
-| ai-dynamo-runtime | 1.2.1 |
-| dynamo Python source | `ai-dynamo/dynamo@919682da` (v1.2.1) |
-| deep-gemm | `deepseek-ai/DeepGEMM@477618cd` |
+| ai-dynamo + runtime | 1.2.1 |
 | etcd | 3.5.15 (SHA256 in versions.env) |
 | nats-server | 2.10.28 (SHA256 in versions.env) |
 
@@ -90,3 +94,4 @@ All pins are in `config/versions.env`. Key ones:
 | [`andychensn/ucx`](https://github.com/andychensn/ucx) | UCX 1.22 + SN RDMA patches for bnxt_re |
 | [`andychensn/nixl`](https://github.com/andychensn/nixl) | NIXL + SN UCX integration |
 | [`andychensn/vllm-rdu`](https://github.com/andychensn/vllm-rdu) | vLLM hardware plugin for SambaNova RDU |
+| [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | vLLM fork — source of `patches/vllm_nixl_connector.patch` |

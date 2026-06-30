@@ -11,10 +11,20 @@ source "$REPO_ROOT/config/cluster.env"
 
 ETCD="$REPO_ROOT/vendor/bin/etcd"
 NATS="$REPO_ROOT/vendor/bin/nats-server"
-GPU_VENV="$REPO_ROOT/.venv_gpu"
+# Lean control plane venv — python3.12 + ai-dynamo only, no GPU/CUDA needed.
+# Auto-created on first run. Lives on NFS, accessible from login node.
+CP_VENV="$REPO_ROOT/.venv_cp"
 LOG_DIR="$REPO_ROOT/logs"
 mkdir -p "$LOG_DIR"
 TS=$(date +%Y%m%d_%H%M%S)
+
+# Bootstrap control plane venv if missing
+if [ ! -x "$CP_VENV/bin/python" ]; then
+    echo "Creating control plane venv ($CP_VENV)..."
+    python3.12 -m venv "$CP_VENV"
+    "$CP_VENV/bin/pip" install -q "ai-dynamo[vllm]==$DYNAMO_VERSION"
+    echo "  Control plane venv ready"
+fi
 
 if [[ "${1:-}" == "--stop" ]]; then
     echo "Stopping control plane..."
@@ -45,7 +55,7 @@ sleep 1
 echo "Starting Dynamo frontend on $CONTROL_PLANE_IP:$VLLM_PORT..."
 ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \
 NATS_SERVER="nats://$CONTROL_PLANE_IP:$NATS_PORT" \
-    "$GPU_VENV/bin/python" -m dynamo.frontend \
+    "$CP_VENV/bin/python" -m dynamo.frontend \
     --http-port "$VLLM_PORT" \
     >> "$LOG_DIR/${TS}_frontend.log" 2>&1 &
 FRONTEND_PID=$!

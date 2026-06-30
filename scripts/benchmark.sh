@@ -57,9 +57,9 @@ fi
 BENCH_SCRIPT="$INFERENCEX_DIR/utils/bench_serving/benchmark_serving.py"
 BENCH_DIR="$INFERENCEX_DIR/utils/bench_serving"
 
-# ── Python env for benchmarking (use GPU venv — has transformers/tokenizers) ─
-VENV="$REPO_ROOT/.venv_gpu"
-[ ! -d "$VENV" ] && { echo "ERROR: .venv_gpu not built — run scripts/build_gpu_venv.sh first"; exit 1; }
+# ── Python env for benchmarking (use control plane venv — has transformers/tokenizers) ─
+VENV="$REPO_ROOT/.venv_cp"
+[ ! -d "$VENV" ] && { echo "ERROR: .venv_cp not found — run bash launch/control_plane.sh once to create it"; exit 1; }
 PYTHON="$VENV/bin/python"
 
 mkdir -p "$RESULT_DIR"

@@ -1,23 +1,16 @@
 #!/usr/bin/env bash
 # GPU prefill worker — submits SLURM job, waits for Dynamo registration.
+# Runs via Docker (vllm/vllm-openai base + UCX/NIXL/patch baked in).
+# Build the image first: bash scripts/build_docker_gpu.sh
 #
-# Default: runs via Docker (stock vllm image + UCX/NIXL/patch baked in).
-# Fallback: set USE_VENV=1 to use the NFS venv (build_gpu_venv.sh).
-#
-# Usage:
-#   bash launch/gpu_prefill.sh              # Docker mode (default)
-#   USE_VENV=1 bash launch/gpu_prefill.sh  # venv fallback
+# Usage: bash launch/gpu_prefill.sh
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 source "$REPO_ROOT/config/versions.env"
 source "$REPO_ROOT/config/cluster.env"
 
-USE_VENV=${USE_VENV:-0}
-GPU_VENV="$REPO_ROOT/.venv_gpu"         # only used in venv fallback
-UCX_INSTALL="$REPO_ROOT/ucx-install"    # only used in venv fallback
-GPU_CACHE_ROOT="$REPO_ROOT/.gpu_cache"  # NFS cache dir — auto-mounted in container
-
+GPU_CACHE_ROOT="$REPO_ROOT/.gpu_cache"
 LOG_DIR="$REPO_ROOT/logs"
 mkdir -p "$LOG_DIR" "$GPU_CACHE_ROOT"
 TS=$(date +%Y%m%d_%H%M%S)
@@ -30,76 +23,43 @@ if [[ "${1:-}" == "--inner" ]]; then
     LOCAL_IP=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep '^10\.17\.' | head -1 || true)
     LOCAL_IP=${LOCAL_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}
 
-    VLLM_ARGS=(
-        --model "$MODEL"
-        --served-model-name "$SERVED_MODEL_NAME"
-        --disaggregation-mode prefill
-        --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
-        --max-model-len "$MAX_MODEL_LEN"
-        --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
-        --max-num-seqs "$MAX_NUM_SEQS"
-        --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
-        --block-size "$BLOCK_SIZE"
-        --no-enable-prefix-caching
-        --trust-remote-code
-        --kv-transfer-config "$KV_CONFIG"
-    )
+    echo "=== GPU prefill (Docker) on $(hostname) ==="
+    echo "    image:    $GPU_IMAGE"
+    echo "    RoCE IP:  $LOCAL_IP"
 
-    COMMON_ENV=(
-        -e "ETCD_ENDPOINTS=http://$CONTROL_PLANE_IP:$ETCD_PORT"
-        -e "NATS_SERVER=nats://$CONTROL_PLANE_IP:$NATS_PORT"
-        -e "DYN_REQUEST_PLANE=tcp"
-        -e "VLLM_NIXL_SIDE_CHANNEL_HOST=$LOCAL_IP"
-        -e "VLLM_NIXL_SIDE_CHANNEL_PORT=5600"
-        -e "VLLM_PD_CHUNK_OVERLAP=1"
-        -e "VLLM_PD_STAGE_TIMING=1"
-        -e "HF_HOME=$GPU_CACHE_ROOT/huggingface"
-        -e "VLLM_CACHE_ROOT=$GPU_CACHE_ROOT/vllm"
-        -e "TRITON_CACHE_DIR=$GPU_CACHE_ROOT/triton"
-        -e "TORCHINDUCTOR_CACHE_DIR=$GPU_CACHE_ROOT/inductor"
-        -e "FLASHINFER_WORKSPACE_BASE=$GPU_CACHE_ROOT/flashinfer"
-        -e "VLLM_CONFIG_ROOT=$GPU_CACHE_ROOT/vllm_config"
-    )
-
-    if [ "$USE_VENV" = "1" ]; then
-        # ── Venv fallback ─────────────────────────────────────────────────────
-        echo "=== GPU prefill (venv) on $(hostname) ==="
-        echo "    venv: $GPU_VENV"
-        [ -d "$GPU_VENV" ] || { echo "ERROR: venv not found — run scripts/build_gpu_venv.sh"; exit 1; }
-
-        PYVER=$(ls "$GPU_VENV/lib/" | grep "python3\." | head -1)
-        CUDA12_LIBS="$GPU_VENV/lib/$PYVER/site-packages/nvidia/cuda_runtime/lib"
-        export CUDA_HOME=${CUDA_HOME:-/usr/local/cuda}
-        export LD_LIBRARY_PATH="$CUDA12_LIBS:$UCX_INSTALL/lib:$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
-        export PATH="$GPU_VENV/bin:$PATH"
-
-        "$GPU_VENV/bin/python" -c "import torch; print('    torch:', torch.__version__, 'cuda:', torch.version.cuda)"
-        "$GPU_VENV/bin/python" -c "import vllm; print('    vllm:', vllm.__version__)"
-
-        for e in "${COMMON_ENV[@]}"; do
-            # strip -e prefix and export as shell vars
-            VAR="${e#-e }"; export "${VAR?}"
-        done
-        exec "$GPU_VENV/bin/python" -m dynamo.vllm "${VLLM_ARGS[@]}"
-
-    else
-        # ── Docker mode (default) ─────────────────────────────────────────────
-        echo "=== GPU prefill (Docker) on $(hostname) ==="
-        echo "    image: $GPU_IMAGE"
-        echo "    RoCE IP: $LOCAL_IP"
-
-        exec sudo -g docker /usr/bin/cuda-docker-run-wrapper \
-            --net=host --rm \
-            "${COMMON_ENV[@]}" \
-            "$GPU_IMAGE" \
-            python3 -m dynamo.vllm "${VLLM_ARGS[@]}"
-    fi
+    exec sudo -g docker /usr/bin/cuda-docker-run-wrapper \
+        --net=host --rm \
+        -e "ETCD_ENDPOINTS=http://$CONTROL_PLANE_IP:$ETCD_PORT" \
+        -e "NATS_SERVER=nats://$CONTROL_PLANE_IP:$NATS_PORT" \
+        -e "DYN_REQUEST_PLANE=tcp" \
+        -e "VLLM_NIXL_SIDE_CHANNEL_HOST=$LOCAL_IP" \
+        -e "VLLM_NIXL_SIDE_CHANNEL_PORT=5600" \
+        -e "VLLM_PD_CHUNK_OVERLAP=1" \
+        -e "VLLM_PD_STAGE_TIMING=1" \
+        -e "HF_HOME=$GPU_CACHE_ROOT/huggingface" \
+        -e "VLLM_CACHE_ROOT=$GPU_CACHE_ROOT/vllm" \
+        -e "TRITON_CACHE_DIR=$GPU_CACHE_ROOT/triton" \
+        -e "TORCHINDUCTOR_CACHE_DIR=$GPU_CACHE_ROOT/inductor" \
+        -e "FLASHINFER_WORKSPACE_BASE=$GPU_CACHE_ROOT/flashinfer" \
+        -e "VLLM_CONFIG_ROOT=$GPU_CACHE_ROOT/vllm_config" \
+        "$GPU_IMAGE" \
+        python3 -m dynamo.vllm \
+            --model "$MODEL" \
+            --served-model-name "$SERVED_MODEL_NAME" \
+            --disaggregation-mode prefill \
+            --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
+            --max-model-len "$MAX_MODEL_LEN" \
+            --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
+            --max-num-seqs "$MAX_NUM_SEQS" \
+            --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS" \
+            --block-size "$BLOCK_SIZE" \
+            --no-enable-prefix-caching \
+            --trust-remote-code \
+            --kv-transfer-config "$KV_CONFIG"
 fi
 
 # ── Outer: submit SLURM job and wait for registration ─────────────────────────
-MODE=$( [ "$USE_VENV" = "1" ] && echo "venv" || echo "Docker: $GPU_IMAGE" )
-echo "Submitting GPU prefill on $GPU_NODE ($MODE)..."
-
+echo "Submitting GPU prefill on $GPU_NODE (image: $GPU_IMAGE)..."
 srun \
     -p "$GPU_PARTITION" -w "$GPU_NODE" \
     --gres="$GPU_GRES" \
