@@ -21,7 +21,10 @@ FROM vllm/vllm-openai:${VLLM_VERSION} AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc g++ make autoconf automake libtool pkg-config \
-        libibverbs-dev librdmacm-dev rdma-core git \
+        libibverbs1 libibverbs-dev librdmacm1 librdmacm-dev rdma-core git \
+    && CUDA_MAJ=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') \
+    && apt-get install -y --no-install-recommends cuda-nvml-dev-${CUDA_MAJ} 2>/dev/null \
+    || apt-get install -y --no-install-recommends libcuda1 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
 
 # Build UCX 1.22 with CUDA and bnxt_re verbs support
@@ -45,7 +48,6 @@ RUN git clone --depth=200 --branch sn/v1.22 \
         --prefix=/opt/ucx \
         --enable-shared --disable-static --enable-mt \
         --with-cuda=/usr/local/cuda \
-        --without-nvml \
         --without-java --without-go --without-rocm \
         --without-gdrcopy --without-valgrind \
         --without-knem --without-efa --without-mpi \

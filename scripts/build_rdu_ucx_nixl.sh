@@ -180,10 +180,16 @@ build_on_rdu_node() {
         BUILD_TOOLS_DIR="$BUILD_TMP/build-tools"
         "$PY" -m pip install --prefix="$BUILD_TOOLS_DIR" \
             meson-python pybind11 patchelf pyyaml types-PyYAML setuptools build wheel ninja
-        # Add the installed binaries and site-packages to the path
-        export PATH="$BUILD_TOOLS_DIR/bin:$PATH"
+        # Locate meson/ninja wherever pip put them (location varies by platform)
+        MESON_BIN=$(find "$BUILD_TOOLS_DIR" -name "meson" -type f 2>/dev/null | head -1)
+        NINJA_BIN=$(find "$BUILD_TOOLS_DIR" -name "ninja" -type f 2>/dev/null | head -1)
+        [ -n "$MESON_BIN" ] && export PATH="$(dirname "$MESON_BIN"):$PATH" || { echo "ERROR: meson not found in $BUILD_TOOLS_DIR"; find "$BUILD_TOOLS_DIR" -type f | head -20; exit 1; }
+        [ -n "$NINJA_BIN" ] && export PATH="$(dirname "$NINJA_BIN"):$PATH" || true
+        # Add site-packages so meson-python module is importable
         PYVER_SHORT=$("$PY" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-        export PYTHONPATH="$BUILD_TOOLS_DIR/lib/python${PYVER_SHORT}/site-packages:${PYTHONPATH:-}"
+        SITE_PKG=$(find "$BUILD_TOOLS_DIR" -type d -name "site-packages" 2>/dev/null | head -1)
+        [ -n "$SITE_PKG" ] && export PYTHONPATH="$SITE_PKG:${PYTHONPATH:-}"
+        echo "  meson: $MESON_BIN  ninja: $NINJA_BIN"
 
         export LIBRARY_PATH="$UCX_INSTALL/lib:${LIBRARY_PATH:-}"
         export LD_LIBRARY_PATH="$UCX_INSTALL/lib:${LD_LIBRARY_PATH:-}"
