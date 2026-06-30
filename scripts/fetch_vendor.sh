@@ -45,7 +45,8 @@ if [ ! -f "$VENDOR/etcd" ]; then
 fi
 
 # ── nats-server ───────────────────────────────────────────────────────────────
-NATS_ARCHIVE="nats-server-v${NATS_VERSION}-linux-amd64.zip"
+# Note: nats-server switched from .zip to .tar.gz in v2.11+
+NATS_ARCHIVE="nats-server-v${NATS_VERSION}-linux-amd64.tar.gz"
 NATS_URL="https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/${NATS_ARCHIVE}"
 
 if [ -f "$VENDOR/nats-server" ]; then
@@ -61,16 +62,16 @@ fi
 if [ ! -f "$VENDOR/nats-server" ]; then
     echo "Downloading nats-server v${NATS_VERSION}..."
     curl -fL --progress-bar "$NATS_URL" -o "$TMP/$NATS_ARCHIVE"
-    unzip -q "$TMP/$NATS_ARCHIVE" -d "$TMP/nats" \
+    tar -xzf "$TMP/$NATS_ARCHIVE" -C "$TMP" \
         "nats-server-v${NATS_VERSION}-linux-amd64/nats-server"
-    ACTUAL=$(sha256sum "$TMP/nats/nats-server-v${NATS_VERSION}-linux-amd64/nats-server" | awk '{print $1}')
+    ACTUAL=$(sha256sum "$TMP/nats-server-v${NATS_VERSION}-linux-amd64/nats-server" | awk '{print $1}')
     if [ "$ACTUAL" != "$NATS_SHA256" ]; then
         echo "ERROR: nats-server SHA256 mismatch!"
         echo "  expected: $NATS_SHA256"
         echo "  got:      $ACTUAL"
         exit 1
     fi
-    cp "$TMP/nats/nats-server-v${NATS_VERSION}-linux-amd64/nats-server" "$VENDOR/nats-server"
+    cp "$TMP/nats-server-v${NATS_VERSION}-linux-amd64/nats-server" "$VENDOR/nats-server"
     chmod +x "$VENDOR/nats-server"
     echo "nats-server v${NATS_VERSION}: downloaded and verified ✅"
 fi
