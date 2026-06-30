@@ -114,26 +114,30 @@ RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__)
 # The host kernel's OOT bnxt_re driver exposes ibverbs ABI 8; Ubuntu's inbox rdmav34
 # only accepts ABI 1 — causing UCX to crash. Building v58 produces a native Ubuntu .so
 # that accepts ABI 8, matching the host. No Broadcom tarball or gated download needed.
+# Build libbnxt_re from rdma-core 39.1 source (matches Ubuntu 22.04's IBVERBS_PRIVATE_34 ABI)
+# with a one-line patch to accept the host OOT bnxt_re kernel driver's ABI version 8.
+# No upstream rdma-core version supports ABI 8 out of the box — only Broadcom's OOT userspace does.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake ninja-build git \
         libnl-3-200 libnl-3-dev libnl-route-3-200 libnl-route-3-dev \
         libudev-dev python3-dev dpkg-dev pkg-config pandoc python3-docutils \
     && rm -rf /var/lib/apt/lists/* && \
-    git clone --depth=1 --branch v58.1 \
+    git clone --depth=1 --branch v39.1 \
         https://github.com/linux-rdma/rdma-core.git /tmp/rdma-core && \
+    # Patch bnxt_re to accept host kernel's OOT ABI version (8) — upstream only accepts 1
+    sed -i 's/\.match_max_abi_version\s*=\s*BNXT_RE_ABI_VERSION/.match_max_abi_version = 8/' \
+        /tmp/rdma-core/providers/bnxt_re/main.c && \
+    grep "match_max_abi_version" /tmp/rdma-core/providers/bnxt_re/main.c && \
     cmake -GNinja \
         -DCMAKE_INSTALL_PREFIX=/usr \
         -DCMAKE_INSTALL_LIBDIR=/usr/lib/x86_64-linux-gnu \
         -DNO_MAN_PAGES=1 \
         -B /tmp/rdma-core/build /tmp/rdma-core && \
     ninja -C /tmp/rdma-core/build && \
-    BNXT_SO=$(find /tmp/rdma-core/build -name "libbnxt_re*.so" 2>/dev/null | head -1) && \
+    BNXT_SO=$(find /tmp/rdma-core/build -name "libbnxt_re-rdmav34.so" 2>/dev/null | head -1) && \
     echo "Built: $BNXT_SO" && \
-    [ -n "$BNXT_SO" ] || { echo "ERROR: libbnxt_re.so not found"; exit 1; } && \
-    cp "$BNXT_SO" \
-       /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav57.so && \
-    ln -sf libbnxt_re-rdmav57.so \
-       /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so && \
+    [ -n "$BNXT_SO" ] || { echo "ERROR: libbnxt_re-rdmav34.so not found"; exit 1; } && \
+    cp "$BNXT_SO" /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so && \
     ls -la /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so && \
     rm -rf /tmp/rdma-core
 
