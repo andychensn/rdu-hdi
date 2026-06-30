@@ -7,6 +7,7 @@ export PYTHONNOUSERSITE=1
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 source "$REPO_ROOT/config/versions.env"
 source "$REPO_ROOT/config/cluster.env"
+source "$REPO_ROOT/config/model.env"
 
 RDU_VENV="${RDU_VENV:-$REPO_ROOT/.venv_rdu}"
 RDU_CACHE=${RDU_CACHE:-$REPO_ROOT/.rdu_cache}
@@ -42,9 +43,9 @@ echo "    side-channel: $RDU_ROCE_IP_LOCAL:5600"
 
 source "$RDU_VENV/bin/activate"
 
-# RDU config file
-RDU_CONFIG="$REPO_ROOT/config/minimax_m2.yaml"
-[ ! -f "$RDU_CONFIG" ] && RDU_CONFIG=${RDU_CONFIG_PATH:-""}
+# RDU model config — set MODEL_CONFIG in config/model.env for your model
+RDU_CONFIG="${MODEL_CONFIG:-}"
+[ -n "$RDU_CONFIG" ] && [ ! -f "$RDU_CONFIG" ] && { echo "WARNING: MODEL_CONFIG=$RDU_CONFIG not found"; RDU_CONFIG=""; }
 
 PYTHONNOUSERSITE=1 \
 ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \

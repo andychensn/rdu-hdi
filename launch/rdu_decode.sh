@@ -6,6 +6,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 source "$REPO_ROOT/config/versions.env"
 source "$REPO_ROOT/config/cluster.env"
+source "$REPO_ROOT/config/model.env"
 
 RDU_VENV="$REPO_ROOT/.venv_rdu"
 LOG_DIR="$REPO_ROOT/logs"

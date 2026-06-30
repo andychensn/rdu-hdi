@@ -1,97 +1,156 @@
 # rdu-hdi — GPU Prefill + RDU Decode via Dynamo
 
-Disaggregated inference on SambaNova hardware: H200×4 GPU handles prefill,
+Disaggregated inference on SambaNova hardware: H200 GPU handles prefill,
 SN40L RDU handles decode, coordinated by NVIDIA Dynamo.
 
-**Model:** MiniMax-M2.x FP8 &nbsp;|&nbsp; **First run:** 2026-06-29 — TTFT 230ms, TPOT 2.23ms
+---
+
+## Architecture
+
+```
+vllm/vllm-openai (Docker image)  ─────────  GPU prefill worker
+  + andychensn/ucx  (bnxt_re RoCE)          │ NIXL KV cache transfer
+  + andychensn/nixl                          │
+  + vllm nixl_connector patch                │
+  + ai-dynamo[vllm]                          │
+                                             │
+andychensn/vllm-rdu (NFS venv)  ──────────  RDU decode worker
+  + ai-dynamo[vllm]                          │
+  + NIXL (pathb/bnxt_re)                     │
+                                             │
+etcd + NATS + dynamo.frontend   ──────────  Control plane (login node)
+```
+
+All external dependencies are pinned to exact commit SHAs in `config/versions.env`.
 
 ---
 
-## Stack
+## Configuration
 
-```
-vllm/vllm-openai:v0.16.0 (Docker)          GPU prefill (dynamo.vllm)
-  + andychensn/ucx   sn/v1.22    ──────►   │  NIXL KV cache transfer (RoCE RDMA)
-  + andychensn/nixl  sn/rdu-working         │
-  + vllm nixl_connector patch               │
-  + ai-dynamo[vllm] 1.2.1                   │
-                                            │
-andychensn/vllm-rdu (NFS venv) ──────────► RDU decode (dynamo.vllm)
-  + ai-dynamo[vllm] 1.2.1                   │
-  + NIXL (pathb/bnxt_re build)              │
-                                            │
-etcd + NATS + dynamo.frontend ──────────── Control plane (login node)
-  (vendor/bin + .venv_cp)
+Two config files to edit before use:
+
+**`config/cluster.env`** — cluster topology (nodes, IPs, reservations, Docker image tag)
+```bash
+GPU_NODE=sc3-c129           # your GPU node
+GPU_ROCE_IP=10.17.176.33    # GPU node RoCE IP
+RDU_NODE=sc3-s339           # your RDU node
+RDU_ROCE_IP=10.17.112.29    # RDU node RoCE IP
+...
 ```
 
-All source dependencies are pinned to exact commit SHAs in `config/versions.env`.
-GPU worker runs as a Docker container; no venv build required on GPU nodes.
+**`config/model.env`** — model/PEF paths and inference settings
+```bash
+MODEL=/path/to/checkpoints/MyModel
+SERVED_MODEL_NAME=MyModel
+PEF=/path/to/my-model.pef
+TENSOR_PARALLEL_SIZE=4
+MAX_MODEL_LEN=196608
+...
+```
 
 ---
 
-## Setup & Launch
-
-See **[docs/quickstart.md](docs/quickstart.md)** — one-time setup + per-session launch.
+## One-time setup
 
 ```bash
-# Per-session (after one-time setup):
-bash launch/control_plane.sh                                 # etcd + NATS + Dynamo frontend
-bash launch/gpu_prefill.sh                                   # GPU Docker worker (blocks ~10 min)
-source config/cluster.env && bash launch/rdu_decode.sh       # RDU worker (blocks ~12 min)
-bash launch/control_plane.sh --stop && scancel $(squeue -u $USER -h -o '%i')
+git clone https://github.com/andychensn/rdu-hdi.git && cd rdu-hdi
+REPO=$(pwd)
+
+# Edit config for your cluster + model before continuing
+vi config/cluster.env config/model.env
+
+source config/versions.env
+
+# 1. Clone runtime repos (vllm-rdu plugin, benchmark tooling)
+gh repo clone andychensn/vllm-rdu "$REPO/vllm-rdu"
+git -C "$REPO/vllm-rdu" checkout "$VLLM_RDU_COMMIT"
+git clone https://github.com/SemiAnalysisAI/InferenceX.git "$REPO/InferenceX"
+git -C "$REPO/InferenceX" checkout "$INFERENCEX_COMMIT"
+
+# 2. Fetch etcd + nats-server binaries (SHA256-verified)
+bash scripts/fetch_vendor.sh
+
+# 3. Build GPU prefill Docker image (~20 min, login node, no GPU required)
+bash scripts/build_docker_gpu.sh
+
+# 4. Fetch + build RDU UCX/NIXL (two phases: login node then RDU node)
+source config/cluster.env
+bash scripts/build_rdu_ucx_nixl.sh --fetch-only
+snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
+    --allow-local-lib-python --reservation "$RDU_RESERVATION" \
+    --pef "$PEF" --timeout 00:30:00 -o logs/build_rdu_ucx_nixl.log \
+    -- bash scripts/build_rdu_ucx_nixl.sh --build-only
+
+# 5. Build RDU venv (~10 min on RDU node)
+snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
+    --allow-local-lib-python --reservation "$RDU_RESERVATION" \
+    --pef "$PEF" --timeout 00:30:00 -o logs/build_rdu_venv.log \
+    -- bash scripts/build_rdu_venv.sh
 ```
 
 ---
 
-## Repo contents
+## Per-session launch
 
-```
-config/
-  versions.env    — all commit SHAs and version pins
-  cluster.env     — node names, IPs, reservations, Docker image tag
-Dockerfile.gpu    — GPU prefill image (vllm base + UCX + NIXL + patch + ai-dynamo)
-launch/
-  control_plane.sh / gpu_prefill.sh / rdu_decode.sh / rdu_inner.sh
-scripts/
-  build_docker_gpu.sh    — build + push GPU Docker image (login node, ~20 min)
-  build_rdu_ucx_nixl.sh  — fetch + compile UCX/NIXL for RDU venv (two-phase)
-  build_rdu_venv.sh      — build RDU Python venv on s339
-  fetch_vendor.sh        — download etcd + nats-server (SHA256-verified)
-  benchmark.sh           — wrapper for InferenceX/benchmark_serving.py
-  test_*.sh              — import validation scripts
-patches/
-  vllm_nixl_connector.patch  — adds REGISTER_CONSUMER_MSG to vllm 0.16.0
-docs/
-  quickstart.md   — new-member setup guide
+```bash
+# 1. Control plane (auto-creates .venv_cp on first run)
+bash launch/control_plane.sh
+
+# 2. GPU prefill (~10 min: model load + warmup)
+bash launch/gpu_prefill.sh
+
+# 3. RDU decode — waits for GPU registration, then ~12 min
+source config/cluster.env && bash launch/rdu_decode.sh
+
+# 4. Warmup (first request ~47s, cold NIXL init)
+curl -s http://localhost:18000/v1/completions \
+    -H "Content-Type: application/json" \
+    -d "{\"model\":\"$SERVED_MODEL_NAME\",\"prompt\":\"hello\",\"max_tokens\":1}"
 ```
 
-Runtime-only (gitignored, set up by quickstart):
-`.venv_cp/`, `.venv_rdu/`, `.gpu_cache/`, `vllm-rdu/`, `InferenceX/`, `vendor/bin/`
+> Do not start RDU decode before GPU prefill — Dynamo builds the wrong pipeline.
+
+## Benchmark
+
+```bash
+bash scripts/benchmark.sh --input-len 1000 --output-len 1000 --concurrency 1
+```
+
+Results saved to `benchmark_results/` (gitignored).
+
+## Teardown
+
+```bash
+bash launch/control_plane.sh --stop
+scancel $(squeue -u $USER -h -o '%i')
+```
 
 ---
 
-## Version pins
+## Docker
 
-All pins are in `config/versions.env`. Key ones:
+Two wrappers on the cluster:
 
-| Component | Pin |
-|-----------|-----|
-| vllm Docker base | `vllm/vllm-openai:0.16.0` |
-| GPU image tag | `v0.16.0-rdu-hdi.1` (in `cluster.env`) |
-| UCX | `andychensn/ucx@e153f2e4` (sn/v1.22) |
-| NIXL | `andychensn/nixl@c2abc770` (sn/rdu-working) |
-| vllm-rdu | `andychensn/vllm-rdu@5bc4a563` |
-| ai-dynamo + runtime | 1.2.1 |
-| etcd | 3.5.15 (SHA256 in versions.env) |
-| nats-server | 2.10.28 (SHA256 in versions.env) |
+| Wrapper | Where | Supports |
+|---------|-------|---------|
+| `/usr/bin/docker-wrapper` | Login node | build, push, pull, ps, … |
+| `/usr/bin/cuda-docker-run-wrapper` | GPU nodes | run (GPU passthrough + `/import` mount) |
+
+Both require `sudo -g docker`. Internal registry: `sc-artifacts2.sambanovasystems.com/sw-docker-scratch/`.
+`--net=host` required when running on GPU nodes (for RoCE RDMA).
 
 ---
+
+## Known gaps
+
+- **vllm nixl_connector patch**: `REGISTER_CONSUMER_MSG` not in stock vllm 0.16.0 — applied in `Dockerfile.gpu`. Source: `sambanova/sn_vllm`.
+- **RDU torch compat**: s339 has `torch 2.2.0+sn`; vllm 0.16.0 uses torch 2.4+ APIs. Two files patched by `build_rdu_venv.sh`. Long-term fix: RDU Docker image with matching torch.
 
 ## Component repos
 
 | Repo | Purpose |
 |------|---------|
-| [`andychensn/ucx`](https://github.com/andychensn/ucx) | UCX 1.22 + SN RDMA patches for bnxt_re |
+| [`andychensn/ucx`](https://github.com/andychensn/ucx) | UCX 1.22 + SN RDMA patches |
 | [`andychensn/nixl`](https://github.com/andychensn/nixl) | NIXL + SN UCX integration |
-| [`andychensn/vllm-rdu`](https://github.com/andychensn/vllm-rdu) | vLLM hardware plugin for SambaNova RDU |
-| [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | vLLM fork — source of `patches/vllm_nixl_connector.patch` |
+| [`andychensn/vllm-rdu`](https://github.com/andychensn/vllm-rdu) | vLLM plugin for SambaNova RDU |
+| [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | Source of `patches/vllm_nixl_connector.patch` |

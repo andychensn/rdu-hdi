@@ -20,11 +20,12 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 source "$REPO_ROOT/config/versions.env"
 source "$REPO_ROOT/config/cluster.env"
+source "$REPO_ROOT/config/model.env"
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 ENDPOINT="http://$CONTROL_PLANE_IP:$VLLM_PORT"
-MODEL="MiniMax-M2.7"
-TOKENIZER="/import/ml-sc-scratch6/yund/checkpoints/MiniMax-M2.7"
+MODEL="${SERVED_MODEL_NAME:-}"                 # from model.env
+TOKENIZER="${MODEL_PATH:-${MODEL:-}}"          # checkpoint path doubles as tokenizer path
 INPUT_LEN=1000
 OUTPUT_LEN=1000
 CONCURRENCY=1
