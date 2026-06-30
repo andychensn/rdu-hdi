@@ -22,7 +22,7 @@ wheelhouse/
 # Results
 benchmark_results/
 
-# Runtime-only repos — cloned at setup time (see docs/quickstart.md Step 1)
+# Runtime-only repos — cloned at setup time (see README.md)
 vllm-rdu/
 InferenceX/
 vendor/bin/

@@ -137,7 +137,7 @@ snrdu run \
     --qos "$RDU_QOS" \
     --nodelist "$RDU_NODE" \
     --allow-local-lib-python \
-    --reservation "$RDU_RESERVATION" \
+    ${RDU_RESERVATION:+--reservation "$RDU_RESERVATION"} \
     --pef "$PEF" \
     --timeout "$RDU_TIMEOUT" \
     -o "$RDU_LOG" \

@@ -50,6 +50,13 @@ MAX_MODEL_LEN=196608
 
 ---
 
+## Prerequisites
+
+- Login node access (`sc-vnc9` or equivalent) with `snrdu` on PATH
+- `gh` CLI authenticated to GitHub (for `gh repo clone`)
+- `sudo -g docker` access on GPU nodes (for `cuda-docker-run-wrapper`)
+- GPU node reservation + RDU node reservation (see `config/cluster.env`)
+
 ## One-time setup
 
 ```bash
@@ -60,6 +67,8 @@ REPO=$(pwd)
 vi config/cluster.env config/model.env
 
 source config/versions.env
+source config/cluster.env
+source config/model.env
 
 # 1. Clone runtime repos (vllm-rdu plugin, benchmark tooling)
 gh repo clone andychensn/vllm-rdu "$REPO/vllm-rdu"
