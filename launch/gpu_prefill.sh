@@ -28,9 +28,15 @@ if [[ "${1:-}" == "--inner" ]]; then
     echo "    image:    $GPU_IMAGE"
     echo "    RoCE IP:  $LOCAL_IP"
 
+    # Mount RDMA/IB devices so UCX can register GPU memory for RoCE NIXL transfer
+    RDMA_DEVICES=""
+    for dev in /dev/infiniband /dev/uverbs* /dev/nvidia-uvm /dev/nvidiactl; do
+        [ -e "$dev" ] && RDMA_DEVICES="$RDMA_DEVICES --device $dev"
+    done
     exec sudo -g docker /usr/bin/cuda-docker-run-wrapper \
         --net=host --rm \
         --entrypoint python3 \
+        $RDMA_DEVICES \
         -e "ETCD_ENDPOINTS=http://$CONTROL_PLANE_IP:$ETCD_PORT" \
         -e "NATS_SERVER=nats://$CONTROL_PLANE_IP:$NATS_PORT" \
         -e "DYN_REQUEST_PLANE=tcp" \
