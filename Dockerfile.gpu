@@ -20,12 +20,15 @@ ARG VLLM_VERSION=v0.16.0
 FROM vllm/vllm-openai:${VLLM_VERSION} AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc g++ make autoconf automake libtool pkg-config \
-        libibverbs1 libibverbs-dev librdmacm1 librdmacm-dev rdma-core git \
+        gcc g++ make autoconf automake libtool pkg-config git \
     && CUDA_MAJ=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') \
-    && apt-get install -y --no-install-recommends cuda-nvml-dev-${CUDA_MAJ} 2>/dev/null \
-    || apt-get install -y --no-install-recommends libcuda1 2>/dev/null || true \
+    && apt-get install -y --no-install-recommends cuda-nvml-dev-${CUDA_MAJ} 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
+# Note: intentionally NOT installing libibverbs-dev.
+# The host bnxt_re kernel module supports only ibverbs ABI 1, but Ubuntu 22.04
+# libibverbs uses ABI 8 — this mismatch causes UCX to crash during IB device
+# initialization. Building UCX --without-verbs avoids IB entirely; NIXL uses
+# the cuda_cpy+TCP path for KV transfer (CPU staging, slightly slower than RoCE).
 
 # Build UCX 1.22 with CUDA and bnxt_re verbs support
 ARG UCX_COMMIT=e153f2e470a9681ab253a4704682cdeff02015cb
@@ -48,6 +51,7 @@ RUN git clone --depth=200 --branch sn/v1.22 \
         --prefix=/opt/ucx \
         --enable-shared --disable-static --enable-mt \
         --with-cuda=/usr/local/cuda \
+        --without-verbs \
         --without-java --without-go --without-rocm \
         --without-gdrcopy --without-valgrind \
         --without-knem --without-efa --without-mpi \
