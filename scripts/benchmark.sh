@@ -7,7 +7,7 @@
 #       --concurrency 1 --num-prompts 10
 #
 # Options (all optional — defaults match common test config):
-#   --endpoint       http://HOST:PORT  (default: http://10.10.0.156:18000)
+#   --endpoint       http://HOST:PORT  (default: http://$CONTROL_PLANE_IP:$VLLM_PORT)
 #   --model          MODEL_NAME        (default: MiniMax-M2.7)
 #   --tokenizer      PATH              (default: from cluster.env)
 #   --input-len      N                 (default: 1000)

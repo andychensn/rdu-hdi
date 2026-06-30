@@ -17,11 +17,8 @@ LOG_DIR="$REPO_ROOT/logs"
 if [[ "${1:-}" == "--inner" ]]; then
     mkdir -p "$RDU_CACHE"
 
-    # Hardware paths — BAR2/SambaFlow are SambaNova system deps (like CUDA, set by snrdu)
-    SOFTWARE_BUILD=${SOFTWARE_BUILD:-/import/snvm-sc-scratch1/guoyaof/software/runtime/build}
-    BAR2_INSTALL=${BAR2_INSTALL:-/import/snvm-sc-scratch2/jayr/sambaflow_gTkgyGCEBH/bazel-install}
-    BAR2_RUNTIME_LIBS=${BAR2_RUNTIME_LIBS:-/import/snvm-sc-scratch1/guoyaof/sw_ddr_rdma/runtime/build/graph/lib}
-    BAR2_PRELOAD=${BAR2_PRELOAD:-/import/snvm-sc-scratch1/guoyaof/sw_ddr_rdma_install/bar2_preload_libs}
+    # Hardware paths — from cluster.env (BAR2/SambaFlow SDK, like CUDA for RDU)
+    # These are already set by cluster.env; snrdu may also inject them from the environment.
 
     # UCX/NIXL: prefer repo-built; fall back to SOFTWARE_BUILD
     RDU_UCX="${RDU_UCX:-$REPO_ROOT/rdu-ucx-install}"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build the RDU venv for rdu-hdi.
-# Must run ON s339 via snrdu (needs /opt/sambanova/bin/python3.11).
-# s339 has no internet — all packages must come from local paths.
+# Must run ON the RDU node via snrdu (needs /opt/sambanova/bin/python3.11).
+# RDU node has no internet — all packages must come from local paths.
 #
 # From login node:
 #   source config/versions.env
-#   snrdu run -sp zd3 --qos 5 --nodelist sc3-s339 --allow-local-lib-python \
+#   snrdu run -sp zd3 --qos 5 --nodelist "$RDU_NODE" --allow-local-lib-python \
 #       --reservation no_sf_catchup_demos --pef $PEF --timeout 00:30:00 \
 #       -o logs/build_rdu_venv.log -- bash scripts/build_rdu_venv.sh
 set -euo pipefail
@@ -19,7 +19,7 @@ VENV=$REPO_ROOT/.venv_rdu
 WHEELHOUSE=$REPO_ROOT/wheelhouse
 
 # All wheels must be pre-fetched by: bash scripts/build_rdu_ucx_nixl.sh --fetch-only
-# s339 has no internet — nothing is downloaded here.
+# RDU node has no internet — nothing is downloaded here.
 VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*linux_x86_64.whl" 2>/dev/null | head -1 || true)
 NIXL_WHL=$(find "$WHEELHOUSE" -name "nixl_cu12*cp311*.whl" 2>/dev/null | head -1 || true)
 DYNAMO_RUNTIME_WHL=$(find "$WHEELHOUSE" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | head -1 || true)
@@ -33,7 +33,7 @@ echo "    VENV: $VENV"
 # Validate — all wheels must exist (fetched by build_rdu_ucx_nixl.sh --fetch-only)
 [ -x "$PY" ]           || { echo "ERROR: $PY not found — must run on RDU node"; exit 1; }
 [ -n "$VLLM_CPU_WHL" ] || { echo "ERROR: no vllm wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; exit 1; }
-[ -n "$NIXL_WHL" ]     || { echo "ERROR: no nixl wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; echo "  Then on s339: bash scripts/build_rdu_ucx_nixl.sh --build-only"; exit 1; }
+[ -n "$NIXL_WHL" ]     || { echo "ERROR: no nixl wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; echo "  Then on RDU node: bash scripts/build_rdu_ucx_nixl.sh --build-only"; exit 1; }
 [ -n "$DYNAMO_RUNTIME_WHL" ] || { echo "ERROR: no ai-dynamo-runtime wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; exit 1; }
 [ -n "$DYNAMO_WHL" ]         || { echo "ERROR: no ai-dynamo wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; exit 1; }
 echo "    vllm:            $VLLM_CPU_WHL"
@@ -51,7 +51,7 @@ pip install -q --upgrade pip
 echo "=== vllm (CPU-only, --no-deps to skip torch version check) ==="
 pip install -q --no-deps "$VLLM_CPU_WHL"
 
-# Patch vllm for torch 2.2.x compatibility (s339 has torch 2.2.0+sn, not 2.9.1)
+# Patch vllm for torch 2.2.x compatibility (RDU node has torch 2.2.0+sn, not 2.9.1)
 # The RDU side only needs Python scheduling/NIXL code, not GPU compute patches.
 VLLM_SITE=$(find "$VENV" -name "*.dist-info" -path "*vllm*" 2>/dev/null | head -1 | xargs dirname 2>/dev/null)
 
@@ -99,7 +99,7 @@ pip install -q --no-deps "$DYNAMO_WHL"
 # ── Dynamo Python deps ────────────────────────────────────────────────────────
 echo "=== Dynamo Python deps ==="
 pip install -q aiohttp msgpack msgspec pyzmq sortedcontainers uvloop cbor2 diskcache 2>/dev/null || \
-    echo "WARNING: some Dynamo deps unavailable (no internet on s339) — may already be in system site-packages"
+    echo "WARNING: some Dynamo deps unavailable (no internet on RDU node) — may already be in system site-packages"
 
 # ── NIXL (built from source by build_rdu_ucx_nixl.sh --build-only) ───────────
 echo "=== nixl ==="

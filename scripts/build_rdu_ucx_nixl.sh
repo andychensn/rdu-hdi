@@ -1,30 +1,29 @@
 #!/usr/bin/env bash
 # Build UCX 1.22 (no CUDA) and NIXL pathb wheel for the RDU decode side.
 #
-# s339 has no internet access, so this script must be run in two phases:
+# The RDU node has no internet access, so this script runs in two phases:
 #
 # Phase 1 (login node — needs internet):
 #   bash scripts/build_rdu_ucx_nixl.sh --fetch-only
-#   Clones UCX and NIXL sources to $REPO_ROOT/rdu-build-src/ on NFS.
 #
-# Phase 2 (sc3-s339 via snrdu — uses NFS clone, no internet needed):
-#   source config/cluster.env
-#   snrdu run -sp zd3 --qos 5 --nodelist sc3-s339 --allow-local-lib-python \
-#       --reservation no_sf_catchup_demos --pef "$PEF" --timeout 00:30:00 \
+# Phase 2 (RDU node via snrdu — uses NFS clone, no internet needed):
+#   source config/cluster.env config/model.env
+#   snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
+#       --allow-local-lib-python --reservation "$RDU_RESERVATION" \
+#       --pef "$PEF" --timeout 00:30:00 \
 #       -o logs/build_rdu_ucx_nixl.log \
 #       -- bash scripts/build_rdu_ucx_nixl.sh --build-only
 #
-# Or run both phases from the login node (Phase 1 runs inline, Phase 2 via snrdu):
-#   source config/cluster.env
-#   bash scripts/build_rdu_ucx_nixl.sh
-#
 # Outputs:
 #   $REPO_ROOT/rdu-ucx-install/    — UCX (CPU-only, bnxt_re verbs, no CUDA)
-#   $REPO_ROOT/wheelhouse/nixl_cu12-*cp311*.whl  — NIXL wheel for s339 python3.11
+#   $REPO_ROOT/wheelhouse/nixl_cu12-*cp311*.whl  — NIXL wheel (RDU python3.11)
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 source "$REPO_ROOT/config/versions.env"
+# cluster.env + model.env needed for printed snrdu instructions (RDU_NODE, PEF, etc.)
+[ -f "$REPO_ROOT/config/cluster.env" ] && source "$REPO_ROOT/config/cluster.env" || true
+[ -f "$REPO_ROOT/config/model.env"   ] && source "$REPO_ROOT/config/model.env"   || true
 
 SRC_DIR="$REPO_ROOT/rdu-build-src"
 UCX_INSTALL="$REPO_ROOT/rdu-ucx-install"
@@ -96,10 +95,10 @@ fetch_sources() {
     fi
 }
 
-# ── Phase 2: Build on s339 (uses NFS clone, no internet needed) ──────────────
-build_on_s339() {
+# ── Phase 2: Build on RDU node (uses NFS clone, no internet needed) ──────────
+build_on_rdu_node() {
     echo "=== Phase 2: Building UCX + NIXL on $(hostname) $(date) ==="
-    [ -x "$PY" ] || { echo "ERROR: $PY not found — must run on s339"; exit 1; }
+    [ -x "$PY" ] || { echo "ERROR: $PY not found — must run on RDU node via snrdu"; exit 1; }
     [ -d "$SRC_DIR/ucx/.git" ] || { echo "ERROR: sources not fetched — run with --fetch-only from login node first"; exit 1; }
     for cmd in gcc make autoreconf libtoolize; do
         command -v "$cmd" >/dev/null || { echo "ERROR: $cmd not found"; exit 1; }
@@ -179,15 +178,15 @@ case "$MODE" in
     --fetch-only)
         fetch_sources ;;
     --build-only)
-        build_on_s339 ;;
+        build_on_rdu_node ;;
     both|"")
         fetch_sources
         echo ""
-        echo "Sources fetched to $SRC_DIR. Now submit the build job on s339:"
+        echo "Sources and wheels fetched. Now submit the build job on the RDU node:"
         echo ""
-        echo "  source config/cluster.env"
-        echo "  snrdu run -sp zd3 --qos 5 --nodelist sc3-s339 --allow-local-lib-python \\"
-        echo "      --reservation no_sf_catchup_demos --pef \"\$PEF\" --timeout 00:30:00 \\"
+        echo "  snrdu run -sp ${RDU_PARTITION:-zd3} --qos ${RDU_QOS:-5} --nodelist ${RDU_NODE:-<RDU_NODE>} \\"
+        echo "      --allow-local-lib-python ${RDU_RESERVATION:+--reservation $RDU_RESERVATION} \\"
+        echo "      --pef ${PEF:-<PEF>} --timeout 00:30:00 \\"
         echo "      -o logs/build_rdu_ucx_nixl.log \\"
         echo "      -- bash $REPO_ROOT/scripts/build_rdu_ucx_nixl.sh --build-only"
         ;;
