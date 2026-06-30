@@ -30,3 +30,4 @@ rdu-build-src/
 
 # Cluster-specific local notes
 docs/local/
+.docker-buildx/

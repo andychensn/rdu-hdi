@@ -163,3 +163,23 @@ Both require `sudo -g docker`. Internal registry: `sc-artifacts2.sambanovasystem
 | [`andychensn/nixl`](https://github.com/andychensn/nixl) | NIXL + SN UCX integration |
 | [`andychensn/vllm-rdu`](https://github.com/andychensn/vllm-rdu) | vLLM plugin for SambaNova RDU |
 | [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | Source of `patches/vllm_nixl_connector.patch` |
+
+## Docker GPU prefill status
+
+The GPU prefill Docker image builds and runs but fails during NIXL initialization:
+```
+uct_mem.c:482  Assertion `mem.memh != UCT_MEM_HANDLE_NULL' failed
+```
+
+**Root cause**: UCX cannot register CUDA GPU memory for cross-node transfer inside Docker.
+NIXL needs GPU-Direct RDMA (CUDA memory → RDMA NIC) which requires:
+1. The host bnxt_re kernel module supports ibverbs ABI 8 (currently only ABI 1)
+2. OR `nvidia_peermem` kernel module loaded (not loaded on sc3-c128)
+
+The Docker image's Ubuntu 22.04 libibverbs (ABI 8) is incompatible with the host's bnxt_re driver (ABI 1), causing all RoCE adapters to fail device initialization.
+
+**Confirmed working natively** (v3 venv) on both sc3-c128 and sc3-c129.
+
+**IT ask**: Update bnxt_re kernel driver to support ibverbs ABI 8, or load `nvidia_peermem` module on GPU nodes.
+
+**Workaround**: Use `USE_VENV=1 bash launch/gpu_prefill.sh` (see v3 venv setup) until Docker fix is available.
