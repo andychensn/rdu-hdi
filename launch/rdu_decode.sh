@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # RDU decode worker — submits via snrdu, waits for Dynamo registration.
-# Uses v2's dynamo source to avoid SIGILL from newer dynamo.vllm APIs on s339.
 # Usage: bash launch/rdu_decode.sh
 set -euo pipefail
 
@@ -21,11 +20,6 @@ SOFTWARE_BUILD=${SOFTWARE_BUILD:-/import/snvm-sc-scratch1/guoyaof/software/runti
 BAR2_INSTALL=${BAR2_INSTALL:-/import/snvm-sc-scratch2/jayr/sambaflow_gTkgyGCEBH/bazel-install}
 BAR2_RUNTIME_LIBS=${BAR2_RUNTIME_LIBS:-/import/snvm-sc-scratch1/guoyaof/sw_ddr_rdma/runtime/build/graph/lib}
 BAR2_PRELOAD=${BAR2_PRELOAD:-/import/snvm-sc-scratch1/guoyaof/sw_ddr_rdma_install/bar2_preload_libs}
-
-# Use the RDU-specific dynamo source from this repo.
-# dynamo_src_rdu/ is a snapshot of ai-dynamo/dynamo@v1.2.0 that avoids
-# the run_headless import → PyAV C ext → SIGILL chain on the RDU CPU.
-RDU_DYNAMO_SRC="${RDU_DYNAMO_SRC:-$REPO_ROOT/dynamo_src_rdu}"
 
 # Cache dirs
 RDU_CACHE=${RDU_CACHE:-$REPO_ROOT/.rdu_cache}

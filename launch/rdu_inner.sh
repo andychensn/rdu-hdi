@@ -31,9 +31,6 @@ else
     _NIXL_LIB="$SOFTWARE_BUILD/nixl-install/lib"
 fi
 
-# RDU dynamo source — stable version that avoids SIGILL (PyAV/run_headless chain on RDU CPU)
-RDU_DYNAMO_SRC="${RDU_DYNAMO_SRC:-$REPO_ROOT/dynamo_src_rdu}"
-
 # Detect RDU's own RoCE IP
 RDU_ROCE_IP_LOCAL=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep '^10\.17\.' | head -1 || true)
 RDU_ROCE_IP_LOCAL=${RDU_ROCE_IP_LOCAL:-$(hostname -I 2>/dev/null | awk '{print $1}')}
@@ -91,7 +88,7 @@ VLLM_CACHE_ROOT="$RDU_CACHE/vllm" \
 HF_HOME="$RDU_CACHE/huggingface" \
 VLLM_CONFIG_ROOT="$RDU_CACHE/vllm_config" \
 TRANSFORMERS_CACHE="$RDU_CACHE/huggingface" \
-PYTHONPATH="$BAR2_INSTALL/python:$RDU_DYNAMO_SRC:${PYTHONPATH:-}" \
+PYTHONPATH="$BAR2_INSTALL/python:${PYTHONPATH:-}" \
 LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$SOFTWARE_BUILD/etcd-cpp-api-install/lib:$SOFTWARE_BUILD/gflags-install/lib:$BAR2_RUNTIME_LIBS:$BAR2_INSTALL/lib:${LD_LIBRARY_PATH:-}" \
 LD_PRELOAD="$BAR2_PRELOAD/libc_samba_runtime.so:$BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
     python -m dynamo.vllm \

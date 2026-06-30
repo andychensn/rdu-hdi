@@ -45,14 +45,6 @@ git -C "$REPO/vllm-rdu" checkout "$VLLM_RDU_COMMIT"
 # InferenceX benchmark tooling (SemiAnalysisAI/InferenceX)
 git clone https://github.com/SemiAnalysisAI/InferenceX.git "$REPO/InferenceX"
 git -C "$REPO/InferenceX" checkout "$INFERENCEX_COMMIT"
-
-# Dynamo Python source — same version (v1.2.1) for both GPU and RDU sides
-# Note: no --depth=1 so the exact SHA checkout works regardless of branch tip
-git clone --branch "v$DYNAMO_VERSION" --depth=1 https://github.com/ai-dynamo/dynamo.git /tmp/dynamo-src
-mkdir -p "$REPO/dynamo_src" "$REPO/dynamo_src_rdu"
-cp -r /tmp/dynamo-src/components/src/. "$REPO/dynamo_src/"
-cp -r /tmp/dynamo-src/components/src/. "$REPO/dynamo_src_rdu/"
-rm -rf /tmp/dynamo-src
 ```
 
 ### 2. Fetch infrastructure binaries (~1 min, needs internet)
@@ -188,7 +180,7 @@ scancel $(squeue -u $USER -h -o '%i')
 | torch 2.9.1+cu130 | PyTorch wheel index | ✅ |
 | deep-gemm | `deepseek-ai/DeepGEMM@477618cd` | ✅ |
 | ai-dynamo-runtime 1.2.1 | PyPI | ✅ |
-| dynamo Python source | `ai-dynamo/dynamo` tag `v1.2.1` (both GPU+RDU) | ✅ |
+| ai-dynamo + ai-dynamo-runtime | PyPI `1.2.1` (installed by build scripts) | ✅ |
 | benchmark tooling | `SemiAnalysisAI/InferenceX@37505e11` | ✅ |
 | etcd 3.5.15 | GitHub releases (SHA256-verified) | ✅ |
 | nats-server 2.10.28 | GitHub releases (SHA256-verified) | ✅ |

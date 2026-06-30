@@ -22,7 +22,8 @@ WHEELHOUSE=$REPO_ROOT/wheelhouse
 # s339 has no internet — nothing is downloaded here.
 VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*linux_x86_64.whl" 2>/dev/null | head -1 || true)
 NIXL_WHL=$(find "$WHEELHOUSE" -name "nixl_cu12*cp311*.whl" 2>/dev/null | head -1 || true)
-DYNAMO_WHL=$(find "$WHEELHOUSE" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | head -1 || true)
+DYNAMO_RUNTIME_WHL=$(find "$WHEELHOUSE" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | head -1 || true)
+DYNAMO_WHL=$(find "$WHEELHOUSE" -name "ai_dynamo-*.whl" 2>/dev/null | head -1 || true)
 VLLM_RDU_SRC=$REPO_ROOT/vllm-rdu  # local clone of andychensn/vllm-rdu
 
 echo "=== rdu-hdi RDU venv build on $(hostname) $(date) ==="
@@ -33,10 +34,12 @@ echo "    VENV: $VENV"
 [ -x "$PY" ]           || { echo "ERROR: $PY not found — must run on RDU node"; exit 1; }
 [ -n "$VLLM_CPU_WHL" ] || { echo "ERROR: no vllm wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; exit 1; }
 [ -n "$NIXL_WHL" ]     || { echo "ERROR: no nixl wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; echo "  Then on s339: bash scripts/build_rdu_ucx_nixl.sh --build-only"; exit 1; }
-[ -n "$DYNAMO_WHL" ]   || { echo "ERROR: no ai-dynamo-runtime wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; exit 1; }
-echo "    vllm:   $VLLM_CPU_WHL"
-echo "    nixl:   $NIXL_WHL"
-echo "    dynamo: $DYNAMO_WHL"
+[ -n "$DYNAMO_RUNTIME_WHL" ] || { echo "ERROR: no ai-dynamo-runtime wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; exit 1; }
+[ -n "$DYNAMO_WHL" ]         || { echo "ERROR: no ai-dynamo wheel in $WHEELHOUSE"; echo "  Run from login node: bash scripts/build_rdu_ucx_nixl.sh --fetch-only"; exit 1; }
+echo "    vllm:            $VLLM_CPU_WHL"
+echo "    nixl:            $NIXL_WHL"
+echo "    dynamo-runtime:  $DYNAMO_RUNTIME_WHL"
+echo "    dynamo:          $DYNAMO_WHL"
 
 # ── Create venv ───────────────────────────────────────────────────────────────
 echo "=== Creating venv ==="
@@ -89,8 +92,9 @@ echo "=== transformers==$RDU_TRANSFORMERS_VERSION ==="
 pip install -q "transformers==$RDU_TRANSFORMERS_VERSION"
 
 # ── Dynamo runtime ────────────────────────────────────────────────────────────
-echo "=== ai-dynamo-runtime ==="
-pip install -q "$DYNAMO_WHL"
+echo "=== ai-dynamo-runtime + ai-dynamo ==="
+pip install -q --no-deps "$DYNAMO_RUNTIME_WHL"
+pip install -q --no-deps "$DYNAMO_WHL"
 
 # ── Dynamo Python deps ────────────────────────────────────────────────────────
 echo "=== Dynamo Python deps ==="

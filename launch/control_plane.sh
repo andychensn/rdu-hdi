@@ -12,7 +12,6 @@ source "$REPO_ROOT/config/cluster.env"
 ETCD="$REPO_ROOT/vendor/bin/etcd"
 NATS="$REPO_ROOT/vendor/bin/nats-server"
 GPU_VENV="$REPO_ROOT/.venv_gpu"
-DYNAMO_SRC="$REPO_ROOT/dynamo_src"
 LOG_DIR="$REPO_ROOT/logs"
 mkdir -p "$LOG_DIR"
 TS=$(date +%Y%m%d_%H%M%S)
@@ -46,7 +45,6 @@ sleep 1
 echo "Starting Dynamo frontend on $CONTROL_PLANE_IP:$VLLM_PORT..."
 ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \
 NATS_SERVER="nats://$CONTROL_PLANE_IP:$NATS_PORT" \
-PYTHONPATH="$DYNAMO_SRC:${PYTHONPATH:-}" \
     "$GPU_VENV/bin/python" -m dynamo.frontend \
     --http-port "$VLLM_PORT" \
     >> "$LOG_DIR/${TS}_frontend.log" 2>&1 &

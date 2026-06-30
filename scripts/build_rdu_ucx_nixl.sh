@@ -75,14 +75,24 @@ fetch_sources() {
         echo "  vllm wheel already present: $VLLM_WHL"
     fi
 
-    # ai-dynamo-runtime wheel
+    # ai-dynamo-runtime (Rust compiled bindings) + ai-dynamo (Python app code)
+    # Both downloaded with --no-deps; installed separately on s339 to avoid
+    # pulling vllm/torch as pip dependencies (already installed from wheelhouse).
     if ! find "$WHEEL_OUT" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | grep -q .; then
-        echo "  Downloading ai-dynamo-runtime==$DYNAMO_VERSION wheel..."
-        pip download "ai-dynamo-runtime==$DYNAMO_VERSION" --only-binary=:all: \
-            --dest "$WHEEL_OUT" 2>&1 | tail -3
+        echo "  Downloading ai-dynamo-runtime==$DYNAMO_VERSION..."
+        pip download "ai-dynamo-runtime==$DYNAMO_VERSION" --only-binary=:all: --no-deps \
+            --dest "$WHEEL_OUT" 2>&1 | tail -2
         echo "  ai-dynamo-runtime wheel ✅"
     else
         echo "  ai-dynamo-runtime wheel already present"
+    fi
+    if ! find "$WHEEL_OUT" -name "ai_dynamo-*.whl" 2>/dev/null | grep -q .; then
+        echo "  Downloading ai-dynamo==$DYNAMO_VERSION..."
+        pip download "ai-dynamo==$DYNAMO_VERSION" --only-binary=:all: --no-deps \
+            --dest "$WHEEL_OUT" 2>&1 | tail -2
+        echo "  ai-dynamo wheel ✅"
+    else
+        echo "  ai-dynamo wheel already present"
     fi
 }
 

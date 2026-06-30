@@ -9,7 +9,6 @@ source "$REPO_ROOT/config/cluster.env"
 
 GPU_VENV="$REPO_ROOT/.venv_gpu"
 UCX_INSTALL="$REPO_ROOT/ucx-install"
-DYNAMO_SRC="$REPO_ROOT/dynamo_src"
 LOG_DIR="$REPO_ROOT/logs"
 mkdir -p "$LOG_DIR"
 TS=$(date +%Y%m%d_%H%M%S)
@@ -43,7 +42,6 @@ if [[ "${1:-}" == "--inner" ]]; then
     VLLM_NIXL_SIDE_CHANNEL_PORT=5600 \
     VLLM_PD_CHUNK_OVERLAP=1 \
     VLLM_PD_STAGE_TIMING=1 \
-    PYTHONPATH="$DYNAMO_SRC:${PYTHONPATH:-}" \
     exec "$GPU_VENV/bin/python" -m dynamo.vllm \
         --model "$MODEL" \
         --served-model-name "$SERVED_MODEL_NAME" \

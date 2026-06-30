@@ -137,8 +137,8 @@ pip install -q "$NIXL_WHL"
 # Install stub so 'import nixl' resolves without symlink
 pip install -q --no-deps nixl==1.0.0 2>/dev/null || true
 
-echo "=== Step 4: ai-dynamo-runtime $DYNAMO_VERSION ==="
-pip install -q "ai-dynamo-runtime==$DYNAMO_VERSION"
+echo "=== Step 4: ai-dynamo[vllm] $DYNAMO_VERSION ==="
+pip install -q "ai-dynamo[vllm]==$DYNAMO_VERSION"
 
 echo "=== Step 4: flashinfer $FLASHINFER_VERSION ==="
 pip install -q "flashinfer-python==$FLASHINFER_VERSION" \
