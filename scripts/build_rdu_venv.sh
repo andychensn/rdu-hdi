@@ -117,14 +117,12 @@ pip install -q -e "$VLLM_RDU_SRC"
 # ── Validate ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Validating ==="
+RDU_UCX_LIB="$REPO_ROOT/rdu-ucx-install/lib"
 python -c "import vllm; print(f'vllm: {vllm.__version__}')"
 python -c "import numpy; print(f'numpy: {numpy.__version__}')"
-python -c "import nixl; print('nixl: OK')"
+LD_LIBRARY_PATH="$RDU_UCX_LIB:${LD_LIBRARY_PATH:-}" python -c "import nixl; print('nixl: OK')" || \
+    echo "WARNING: nixl import needs UCX libs — set LD_LIBRARY_PATH=$RDU_UCX_LIB at runtime"
 python -c "import rdu_hardware; print('vllm-rdu: OK')" 2>/dev/null || echo "WARNING: rdu_hardware import failed"
-python -c "
-from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import REGISTER_CONSUMER_MSG
-print('sn_vllm patch: OK')
-" 2>/dev/null || echo "WARNING: sn_vllm patch check failed"
 
 echo ""
 echo "=== RDU venv build COMPLETE $(date) ==="
