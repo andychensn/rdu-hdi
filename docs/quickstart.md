@@ -194,11 +194,34 @@ All version numbers and commit SHAs are in `config/versions.env`.
 
 ---
 
-## Running the GPU worker via Docker
+## Docker on the cluster
 
-The GPU nodes have Docker available via a cluster wrapper that handles SLURM cgroup, GPU passthrough, and NFS mounts. `/import` is automatically mounted inside the container so model weights are accessible without any `-v` flags.
+Two wrappers exist, each for a different purpose:
 
-### Command
+| Wrapper | Where | Purpose |
+|---------|-------|---------|
+| `/usr/bin/docker-wrapper` | Login node (`sc-vnc9`) | `build`, `push`, `pull`, `ps`, `images`, etc. |
+| `/usr/bin/cuda-docker-run-wrapper` | GPU nodes (c127/c128/c129) | `docker run` with GPU passthrough + NFS mounts |
+
+Both require **`sudo -g docker`** (sets primary group to docker — the wrappers check this internally).
+
+### Building and pushing a Docker image (login node)
+
+```bash
+# Build
+sudo -g docker /usr/bin/docker-wrapper build -t sc-artifacts2.sambanovasystems.com/sw-docker-scratch/my-image:tag .
+
+# Push to internal registry
+sudo -g docker /usr/bin/docker-wrapper push sc-artifacts2.sambanovasystems.com/sw-docker-scratch/my-image:tag
+
+# Other ops (pull, ps, images, tag, login, etc.)
+sudo -g docker /usr/bin/docker-wrapper pull vllm/vllm-openai:v0.16.0
+```
+
+Internal registry: `sc-artifacts2.sambanovasystems.com/sw-docker-scratch/` (confirmed accessible).
+Docker Hub is also accessible from the login node and GPU nodes.
+
+### Running a Docker image on a GPU node
 
 ```bash
 srun -p gpuonly -w sc3-c129 --gres=gpu:4 -c 16 --mem=64G -t 04:00:00 \
@@ -207,28 +230,32 @@ srun -p gpuonly -w sc3-c129 --gres=gpu:4 -c 16 --mem=64G -t 04:00:00 \
         --net=host --rm \
         vllm/vllm-openai:v0.16.0 \
         vllm serve /import/ml-sc-scratch6/yund/checkpoints/MiniMax-M2.7 \
-        --tensor-parallel-size 4 \
-        --served-model-name MiniMax-M2.7 \
-        --max-model-len 196608 \
-        --gpu-memory-utilization 0.90'
+        --tensor-parallel-size 4 --served-model-name MiniMax-M2.7 \
+        --max-model-len 196608 --gpu-memory-utilization 0.90'
 ```
 
-### Notes
+Key properties of `cuda-docker-run-wrapper`:
+- **`--net=host`** required for RoCE RDMA to RDU node
+- **`/import` auto-mounted** — model weights and NFS paths work inside container as-is
+- **`-v` mounts** restricted to `$SLURM_TMPDIR` only
+- Must be inside a SLURM job with `--gres=gpu:N` (needs `CUDA_VISIBLE_DEVICES`)
+- Confirmed working on: sc3-c127, sc3-c128. sc3-c129 needs `--reservation RDU-prefill-experiment-test`.
 
-- **`sudo -g docker`** sets the primary group to `docker` — required by the wrapper (`sudo cuda-docker-run-wrapper`, not `sudo docker`)
-- **`--net=host`** is required for RoCE RDMA connectivity to the RDU decode node
-- **Docker Hub is accessible** from GPU nodes — `vllm/vllm-openai:v0.16.0` pulls successfully (confirmed on sc3-c128)
-- **`/import` is mounted** automatically as a shared volume — model checkpoints and NFS paths work inside the container as-is
-- **Nodes confirmed working**: sc3-c127, sc3-c128. sc3-c129 uses the `RDU-prefill-experiment-test` reservation.
-- **Volume mounts (`-v`)** are restricted to `$SLURM_TMPDIR` only — use `/import` paths directly instead
-
-### Smoke test
+### Smoke tests
 
 ```bash
+# Login node — check docker-wrapper works
+sudo -g docker /usr/bin/docker-wrapper version
+
+# GPU node — check cuda-docker-run-wrapper works
 srun -p gpuonly -w sc3-c128 --gres=gpu:1 -c 1 --mem=4096 -t 00:05:00 \
     bash -c 'sudo -g docker /usr/bin/cuda-docker-run-wrapper --net=host --rm \
         vllm/vllm-openai:v0.16.0 vllm -v'
 ```
+
+### Future direction
+
+The GPU venv (`build_gpu_venv.sh`) could be replaced by a `Dockerfile` that layers UCX, NIXL, the vllm patch, and `ai-dynamo[vllm]` on top of `vllm/vllm-openai:v0.16.0`. Build on login node → push to internal registry → run on GPU nodes. RDU side stays as venv (BAR2 SDK is proprietary, can't be in a public image).
 
 ---
 
