@@ -176,18 +176,21 @@ build_on_rdu_node() {
         cp -r "$SRC_DIR/nixl" "$NIXL_SRC"
         mkdir -p "$WHEEL_OUT"
 
-        "$PY" -m pip install --user \
-            meson-python pybind11 patchelf pyyaml types-PyYAML setuptools build wheel
-        # Add user-installed binaries (meson, ninja) to PATH
-        export PATH="$(python3.11 -c 'import site; print(site.getusersitepackages())' 2>/dev/null | sed 's|/lib/python.*/site-packages|/bin|'):$PATH"
-        export PATH="$HOME/.local/bin:$PATH"
+        # Install build tools into a local prefix we control (avoids HOME dependency)
+        BUILD_TOOLS_DIR="$BUILD_TMP/build-tools"
+        "$PY" -m pip install --prefix="$BUILD_TOOLS_DIR" \
+            meson-python pybind11 patchelf pyyaml types-PyYAML setuptools build wheel ninja
+        # Add the installed binaries and site-packages to the path
+        export PATH="$BUILD_TOOLS_DIR/bin:$PATH"
+        PYVER_SHORT=$("$PY" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+        export PYTHONPATH="$BUILD_TOOLS_DIR/lib/python${PYVER_SHORT}/site-packages:${PYTHONPATH:-}"
 
         export LIBRARY_PATH="$UCX_INSTALL/lib:${LIBRARY_PATH:-}"
         export LD_LIBRARY_PATH="$UCX_INSTALL/lib:${LD_LIBRARY_PATH:-}"
         export PKG_CONFIG_PATH="$UCX_INSTALL/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
         cd "$NIXL_SRC"
-        "$PY" -m pip wheel . --no-deps -w "$WHEEL_OUT" \
+        "$PY" -m pip wheel . --no-deps --no-build-isolation -w "$WHEEL_OUT" \
             --config-settings=setup-args="-Ducx_path=$UCX_INSTALL" \
             --config-settings=setup-args="-Denable_plugins=UCX"
         cd "$REPO_ROOT"
