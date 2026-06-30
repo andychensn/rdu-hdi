@@ -110,13 +110,28 @@ RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__)
     fi && \
     rm /tmp/vllm_nixl_connector.patch
 
-# Replace Ubuntu's bnxt_re provider LAST — after all pip installs that might restore rdmav34.
-# The GPU node ships Broadcom's OOT libbnxt_re-rdmav57.so which accepts kernel ABI 8.
-# Ubuntu's inbox rdmav34 only accepts ABI 1 and fails — causing UCX to crash via a broken context.
-COPY .rdma-libs/libbnxt_re-rdmav57.so /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav57.so
-RUN cd /usr/lib/x86_64-linux-gnu/libibverbs/ && \
-    ln -sf libbnxt_re-rdmav57.so libbnxt_re-rdmav34.so && \
-    ls -la libbnxt_re-rdmav34.so
+# Build rdma-core v58 from upstream to get libbnxt_re-rdmav57.so native for Ubuntu.
+# The host kernel's OOT bnxt_re driver exposes ibverbs ABI 8; Ubuntu's inbox rdmav34
+# only accepts ABI 1 — causing UCX to crash. Building v58 produces a native Ubuntu .so
+# that accepts ABI 8, matching the host. No Broadcom tarball or gated download needed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cmake ninja-build libnl-3-dev libnl-route-3-dev libudev-dev python3-dev \
+        dpkg-dev pkg-config pandoc python3-docutils \
+    && rm -rf /var/lib/apt/lists/* && \
+    git clone --depth=1 --branch v58.1 \
+        https://github.com/linux-rdma/rdma-core.git /tmp/rdma-core && \
+    cmake -GNinja \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=/usr/lib/x86_64-linux-gnu \
+        -DNO_MAN_PAGES=1 \
+        -B /tmp/rdma-core/build /tmp/rdma-core && \
+    ninja -C /tmp/rdma-core/build providers/libbnxt_re && \
+    cp /tmp/rdma-core/build/lib/libibverbs/libbnxt_re.so \
+       /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav57.so && \
+    ln -sf libbnxt_re-rdmav57.so \
+       /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so && \
+    ls -la /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so && \
+    rm -rf /tmp/rdma-core
 
 # Validate the image at build time
 RUN python3 -c "import vllm; print('vllm:', vllm.__version__)" && \
