@@ -122,6 +122,32 @@ build_on_rdu_node() {
         sed -i '/^SUBDIRS = / s/ rdu / /' "$UCX_SRC/src/uct/Makefile.am" 2>/dev/null || true
         sed -i '\#m4_include(\[src/uct/rdu/configure.m4\])#d' "$UCX_SRC/src/uct/configure.m4" 2>/dev/null || true
 
+        # rdma-core-devel (libibverbs headers + .so symlink) is required for IB/RoCE support.
+        # On RDU nodes, only the runtime lib exists (.so.1) — not the devel package.
+        # Create local symlinks so UCX configure can find them without sudo.
+        VERBS_TMP="$BUILD_TMP/verbs_devel"
+        mkdir -p "$VERBS_TMP"
+        VERBS_EXTRA_FLAGS=""
+        if [ ! -f /usr/include/infiniband/verbs.h ]; then
+            # Try to find headers from an NFS rdma-core-devel install or guoyaof's build
+            RDMA_HEADERS=$(find /import -name "verbs.h" -path "*/infiniband/*" 2>/dev/null | head -1)
+            if [ -n "$RDMA_HEADERS" ]; then
+                RDMA_INC=$(dirname "$(dirname "$RDMA_HEADERS")")
+                echo "  Using rdma headers from $RDMA_INC"
+                VERBS_EXTRA_FLAGS="CPPFLAGS=-I$RDMA_INC"
+            else
+                echo "  WARNING: infiniband/verbs.h not found — IB transport will be disabled"
+            fi
+        fi
+        # Create .so symlink if only .so.1 exists (needed by configure's -libverbs link test)
+        for LIB in libibverbs librdmacm; do
+            if [ ! -f /usr/lib64/${LIB}.so ] && [ -f /usr/lib64/${LIB}.so.1 ]; then
+                ln -sf /usr/lib64/${LIB}.so.1 "$VERBS_TMP/${LIB}.so"
+            fi
+        done
+        [ -n "$(ls $VERBS_TMP/*.so 2>/dev/null)" ] && \
+            VERBS_EXTRA_FLAGS="${VERBS_EXTRA_FLAGS} LDFLAGS=-L$VERBS_TMP"
+
         ( cd "$UCX_SRC"
           autoreconf -fiv 2>&1 | tail -3
           ./configure \
@@ -132,10 +158,12 @@ build_on_rdu_node() {
               --without-gdrcopy --without-valgrind \
               --without-knem --without-efa --without-mpi \
               --disable-doxygen-doc --enable-optimizations \
-              MPICC= 2>&1 | tail -5
+              MPICC= $VERBS_EXTRA_FLAGS 2>&1 | tail -5
           make -j"$NPROC" install 2>&1 | tail -3
         )
-        echo "UCX IB transports: $(ls $UCX_INSTALL/lib/ucx/libuct_ib*.so 2>/dev/null | wc -l)"
+        IB_COUNT=$(ls $UCX_INSTALL/lib/ucx/libuct_ib*.so 2>/dev/null | wc -l)
+        echo "UCX IB transports: $IB_COUNT"
+        [ "$IB_COUNT" -eq 0 ] && echo "WARNING: No IB transports — RDMA/RoCE will not work. Install rdma-core-devel on the RDU node."
     fi
 
     # Step B: Build NIXL pathb wheel
@@ -148,7 +176,7 @@ build_on_rdu_node() {
         cp -r "$SRC_DIR/nixl" "$NIXL_SRC"
         mkdir -p "$WHEEL_OUT"
 
-        "$PY" -m pip install --user --break-system-packages \
+        "$PY" -m pip install --user \
             meson-python pybind11 patchelf pyyaml types-PyYAML setuptools build wheel 2>&1 | tail -3
 
         export LIBRARY_PATH="$UCX_INSTALL/lib:${LIBRARY_PATH:-}"

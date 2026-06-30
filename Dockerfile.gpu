@@ -40,7 +40,7 @@ RUN git clone --depth=200 --branch sn/v1.22 \
     sed -i '\#m4_include(\[src/uct/rdu/configure.m4\])#d' \
         /tmp/ucx-src/src/uct/configure.m4 2>/dev/null || true && \
     cd /tmp/ucx-src && \
-    autoreconf -fiv 2>&1 | tail -3 && \
+    autoreconf -fiv && \
     ./configure \
         --prefix=/opt/ucx \
         --enable-shared --disable-static --enable-mt \
@@ -49,8 +49,9 @@ RUN git clone --depth=200 --branch sn/v1.22 \
         --without-gdrcopy --without-valgrind \
         --without-knem --without-efa --without-mpi \
         --disable-doxygen-doc --enable-optimizations \
-        MPICC= 2>&1 | tail -5 && \
-    make -j$(nproc) install 2>&1 | tail -3 && \
+        MPICC= && \
+    make -j$(nproc) install && \
+    ls /opt/ucx/include/ucp/api/ucp.h && echo "UCX headers installed ✅" && \
     rm -rf /tmp/ucx-src
 
 # Build NIXL wheel with UCX and CUDA backends
