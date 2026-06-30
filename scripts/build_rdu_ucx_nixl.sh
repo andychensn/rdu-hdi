@@ -177,7 +177,10 @@ build_on_rdu_node() {
         mkdir -p "$WHEEL_OUT"
 
         "$PY" -m pip install --user \
-            meson-python pybind11 patchelf pyyaml types-PyYAML setuptools build wheel 2>&1 | tail -3
+            meson-python pybind11 patchelf pyyaml types-PyYAML setuptools build wheel
+        # Add user-installed binaries (meson, ninja) to PATH
+        export PATH="$(python3.11 -c 'import site; print(site.getusersitepackages())' 2>/dev/null | sed 's|/lib/python.*/site-packages|/bin|'):$PATH"
+        export PATH="$HOME/.local/bin:$PATH"
 
         export LIBRARY_PATH="$UCX_INSTALL/lib:${LIBRARY_PATH:-}"
         export LD_LIBRARY_PATH="$UCX_INSTALL/lib:${LD_LIBRARY_PATH:-}"
@@ -186,7 +189,7 @@ build_on_rdu_node() {
         cd "$NIXL_SRC"
         "$PY" -m pip wheel . --no-deps -w "$WHEEL_OUT" \
             --config-settings=setup-args="-Ducx_path=$UCX_INSTALL" \
-            --config-settings=setup-args="-Denable_plugins=UCX" 2>&1 | tail -10
+            --config-settings=setup-args="-Denable_plugins=UCX"
         cd "$REPO_ROOT"
 
         NIXL_WHL=$(find "$WHEEL_OUT" -name "nixl*.whl" -newer "$BUILD_TMP" | head -1 || true)

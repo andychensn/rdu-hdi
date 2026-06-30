@@ -45,6 +45,7 @@ RUN git clone --depth=200 --branch sn/v1.22 \
         --prefix=/opt/ucx \
         --enable-shared --disable-static --enable-mt \
         --with-cuda=/usr/local/cuda \
+        --without-nvml \
         --without-java --without-go --without-rocm \
         --without-gdrcopy --without-valgrind \
         --without-knem --without-efa --without-mpi \
