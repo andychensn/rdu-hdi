@@ -195,5 +195,4 @@ All version numbers and commit SHAs are in `config/versions.env`.
 
 ## Known gaps
 
-- **nixl-pathb SHA256**: The wheel built by `scripts/build_rdu_ucx_nixl.sh` is not checksummed in `build_rdu_venv.sh`. Low risk since source is SHA-pinned; add `sha256sum` verification once the build process is stable.
 - **RDU venv torch compat**: s339 has `torch 2.2.0+sn` (SambaNova RDU build); vllm 0.16.0 was written against torch 2.4+. Two files crash at import (`torch_utils.py`: missing `infer_schema`; `env_override.py`: torch 2.9 inductor paths). `build_rdu_venv.sh` patches both after install. Long-term fix: build vllm CPU wheel against torch 2.2.x (`scripts/build_vllm_cpu_wheel.sh`).
