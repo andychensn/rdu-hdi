@@ -31,3 +31,5 @@ rdu-build-src/
 # Cluster-specific local notes
 docs/local/
 .docker-buildx/
+# GPU node rdma-core libs (copied by build setup, node-specific binaries)
+.rdma-libs/

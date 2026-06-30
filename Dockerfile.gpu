@@ -90,8 +90,13 @@ COPY --from=builder /opt/ucx /opt/ucx
 COPY --from=builder /tmp/nixl-wheels /tmp/nixl-wheels
 
 # Set LD_LIBRARY_PATH before pip installs so NIXL can find UCX shared libs at import time
+# Replace Ubuntu 22.04's bnxt_re provider (ABI 8) with the GPU node's RHEL version (ABI 1).
+# This matches the host kernel's bnxt_re module, enabling RDMA via the same path as native runs.
+COPY .rdma-libs/libbnxt_re-rdmav57.so /usr/lib/x86_64-linux-gnu/libibverbs/
+COPY .rdma-libs/bnxt_re.driver /etc/libibverbs.d/bnxt_re.driver
+RUN rm -f /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav2.so 2>/dev/null || true
+
 ENV LD_LIBRARY_PATH=/opt/ucx/lib:${LD_LIBRARY_PATH:-}
-# Restrict UCX to only load our transport modules (no IB) — prevents system UCX from loading libuct_ib
 ENV UCX_MODULE_DIR=/opt/ucx/lib/ucx
 
 # Install NIXL wheel (explicit variable avoids silent multi-match on glob)
