@@ -60,10 +60,7 @@ RUN git clone --depth=200 --branch sn/v1.22 \
     make -j$(nproc) install && \
     ls /opt/ucx/include/ucp/api/ucp.h && echo "UCX headers installed ✅" && \
     rm -rf /tmp/ucx-src && \
-    rm -f /opt/ucx/lib/ucx/libuct_ib.so* /opt/ucx/lib/ucx/libuct_ib.la \
-          /opt/ucx/lib/ucx/libuct_ib_mlx5.so* /opt/ucx/lib/ucx/libuct_ib_mlx5.la \
-          /opt/ucx/lib/ucx/libuct_rdmacm.so* /opt/ucx/lib/ucx/libuct_rdmacm.la && \
-    echo "IB transports removed: $(ls /opt/ucx/lib/ucx/ | grep uct_ib || echo none)"
+    echo "UCX IB transports: $(ls /opt/ucx/lib/ucx/libuct_ib*.so 2>/dev/null | wc -l)"
 
 # Build NIXL wheel with UCX and CUDA backends
 ARG NIXL_COMMIT=c2abc770e03b81d01e705fbc0593f0c2d1364935
