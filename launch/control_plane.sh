@@ -23,7 +23,13 @@ TS=$(date +%Y%m%d_%H%M%S)
 if [ ! -x "$CP_VENV/bin/python" ]; then
     echo "Creating control plane venv ($CP_VENV)..."
     python3.12 -m venv "$CP_VENV"
-    "$CP_VENV/bin/pip" install -q "ai-dynamo[vllm]==$DYNAMO_VERSION"
+    # Install from pre-downloaded wheels (PyPI build fails on login node)
+    "$CP_VENV/bin/pip" install -q --no-deps \
+        "$REPO_ROOT/wheelhouse/ai_dynamo_runtime-"*.whl \
+        "$REPO_ROOT/wheelhouse/ai_dynamo-"*.whl
+    # Install runtime dependencies
+    "$CP_VENV/bin/pip" install -q pydantic fastapi uvicorn aiohttp msgpack pyzmq \
+        uvloop sortedcontainers cbor2 diskcache
     echo "  Control plane venv ready"
 fi
 
@@ -56,6 +62,7 @@ sleep 1
 echo "Starting Dynamo frontend on $CONTROL_PLANE_IP:$VLLM_PORT..."
 ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \
 NATS_SERVER="nats://$CONTROL_PLANE_IP:$NATS_PORT" \
+DYN_REQUEST_PLANE=tcp \
     "$CP_VENV/bin/python" -m dynamo.frontend \
     --http-port "$VLLM_PORT" \
     >> "$LOG_DIR/${TS}_frontend.log" 2>&1 &

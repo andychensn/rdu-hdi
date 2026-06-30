@@ -30,6 +30,7 @@ if [[ "${1:-}" == "--inner" ]]; then
 
     exec sudo -g docker /usr/bin/cuda-docker-run-wrapper \
         --net=host --rm \
+        --entrypoint python3 \
         -e "ETCD_ENDPOINTS=http://$CONTROL_PLANE_IP:$ETCD_PORT" \
         -e "NATS_SERVER=nats://$CONTROL_PLANE_IP:$NATS_PORT" \
         -e "DYN_REQUEST_PLANE=tcp" \
@@ -44,7 +45,7 @@ if [[ "${1:-}" == "--inner" ]]; then
         -e "FLASHINFER_WORKSPACE_BASE=$GPU_CACHE_ROOT/flashinfer" \
         -e "VLLM_CONFIG_ROOT=$GPU_CACHE_ROOT/vllm_config" \
         "$GPU_IMAGE" \
-        python3 -m dynamo.vllm \
+        -m dynamo.vllm \
             --model "$MODEL" \
             --served-model-name "$SERVED_MODEL_NAME" \
             --disaggregation-mode prefill \
