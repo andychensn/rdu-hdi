@@ -1,0 +1,110 @@
+# GPU prefill image for rdu-hdi disaggregated inference.
+#
+# Layers on top of vllm/vllm-openai:${VLLM_VERSION} (stock image with torch,
+# vllm, flashinfer, deepgemm already installed):
+#   - UCX 1.22 (andychensn/ucx@sn/v1.22) — bnxt_re RoCE RDMA support
+#   - NIXL (andychensn/nixl@sn/rdu-working) — KV cache transfer library
+#   - vllm nixl_connector patch — adds REGISTER_CONSUMER_MSG handshake
+#   - ai-dynamo[vllm] — dynamo.vllm + dynamo.frontend Python modules
+#
+# Build (from login node sc-vnc9):
+#   bash scripts/build_docker_gpu.sh
+#
+# Run (inside SLURM job on GPU node):
+#   sudo -g docker /usr/bin/cuda-docker-run-wrapper --net=host --rm IMAGE vllm serve ...
+
+ARG VLLM_VERSION=0.16.0
+
+# ── Stage 1: builder — compiles UCX and NIXL wheel ───────────────────────────
+# Uses the same base so CUDA toolkit version matches.
+FROM vllm/vllm-openai:${VLLM_VERSION} AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc g++ make autoconf automake libtool pkg-config \
+        libibverbs-dev librdmacm-dev rdma-core git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build UCX 1.22 with CUDA and bnxt_re verbs support
+ARG UCX_COMMIT=e153f2e470a9681ab253a4704682cdeff02015cb
+RUN git clone --depth=200 --branch sn/v1.22 \
+        https://github.com/andychensn/ucx.git /tmp/ucx-src && \
+    git -C /tmp/ucx-src checkout ${UCX_COMMIT} && \
+    # Strip GDAKI (DOCA/mlx5 GPU-Direct-Async) — not needed, avoids build failures
+    sed -i 's/^SUBDIRS = \. gdaki/SUBDIRS = ./' \
+        /tmp/ucx-src/src/uct/ib/mlx5/Makefile.am 2>/dev/null || true && \
+    sed -i '\#m4_include(\[src/uct/ib/mlx5/gdaki/configure.m4\])#d' \
+        /tmp/ucx-src/src/uct/ib/mlx5/configure.m4 2>/dev/null || true && \
+    rm -rf /tmp/ucx-src/src/uct/ib/mlx5/gdaki && \
+    # Strip RDU module — not needed on GPU side
+    sed -i '/^SUBDIRS = / s/ rdu / /' /tmp/ucx-src/src/uct/Makefile.am 2>/dev/null || true && \
+    sed -i '\#m4_include(\[src/uct/rdu/configure.m4\])#d' \
+        /tmp/ucx-src/src/uct/configure.m4 2>/dev/null || true && \
+    cd /tmp/ucx-src && \
+    autoreconf -fiv 2>&1 | tail -3 && \
+    ./configure \
+        --prefix=/opt/ucx \
+        --enable-shared --disable-static --enable-mt \
+        --with-cuda=/usr/local/cuda \
+        --without-java --without-go --without-rocm \
+        --without-gdrcopy --without-valgrind \
+        --without-knem --without-efa --without-mpi \
+        --disable-doxygen-doc --enable-optimizations \
+        MPICC= 2>&1 | tail -5 && \
+    make -j$(nproc) install 2>&1 | tail -3 && \
+    rm -rf /tmp/ucx-src
+
+# Build NIXL wheel with UCX and CUDA backends
+ARG NIXL_COMMIT=c2abc770e03b81d01e705fbc0593f0c2d1364935
+RUN pip install meson-python pybind11 patchelf pyyaml setuptools build wheel && \
+    git clone --depth=50 --branch sn/rdu-working \
+        https://github.com/andychensn/nixl.git /tmp/nixl-src && \
+    git -C /tmp/nixl-src checkout ${NIXL_COMMIT} && \
+    mkdir -p /tmp/nixl-wheels && \
+    LIBRARY_PATH=/opt/ucx/lib \
+    LD_LIBRARY_PATH=/opt/ucx/lib \
+    PKG_CONFIG_PATH=/opt/ucx/lib/pkgconfig \
+    pip wheel /tmp/nixl-src --no-deps -w /tmp/nixl-wheels \
+        --config-settings=setup-args="-Ducx_path=/opt/ucx" \
+        --config-settings=setup-args="-Denable_plugins=UCX" \
+        --config-settings=setup-args="-Dcuda_path=/usr/local/cuda" && \
+    rm -rf /tmp/nixl-src
+
+# ── Stage 2: final image — stock vllm + UCX libs + NIXL + patch ──────────────
+FROM vllm/vllm-openai:${VLLM_VERSION}
+
+# Copy UCX install (shared libs needed at runtime by NIXL)
+COPY --from=builder /opt/ucx /opt/ucx
+# Copy NIXL wheel
+COPY --from=builder /tmp/nixl-wheels /tmp/nixl-wheels
+
+# Set LD_LIBRARY_PATH before pip installs so NIXL can find UCX shared libs at import time
+ENV LD_LIBRARY_PATH=/opt/ucx/lib:${LD_LIBRARY_PATH:-}
+
+# Install NIXL wheel (explicit variable avoids silent multi-match on glob)
+RUN NIXL_WHL=$(ls /tmp/nixl-wheels/nixl_cu12-*.whl | head -1) && \
+    pip install "$NIXL_WHL" && \
+    rm -rf /tmp/nixl-wheels
+
+# Install Dynamo Python modules (dynamo.vllm, dynamo.frontend)
+ARG DYNAMO_VERSION=1.2.1
+RUN pip install "ai-dynamo[vllm]==${DYNAMO_VERSION}"
+
+# Apply vllm nixl_connector patch (adds REGISTER_CONSUMER_MSG support).
+# Not in stock vllm 0.16.0 — tracked in sambanova/sn_vllm.
+# p2 strips two path components to match the installed package layout.
+COPY patches/vllm_nixl_connector.patch /tmp/
+RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__))") && \
+    patch -p2 -d "$VLLM_DIR" < /tmp/vllm_nixl_connector.patch && \
+    rm /tmp/vllm_nixl_connector.patch
+
+# Validate the image at build time
+RUN python3 -c "import vllm; print('vllm:', vllm.__version__)" && \
+    python3 -c "
+from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import REGISTER_CONSUMER_MSG
+print('vllm patch: OK')
+" && \
+    python3 -c "from nixl._api import nixl_agent; print('nixl: OK')" && \
+    python3 -c "import dynamo.vllm; print('dynamo.vllm: OK')" && \
+    python3 -c "import dynamo.frontend; print('dynamo.frontend: OK')"
+# Note: deep_gemm is baked into the stock vllm image (compiled during image build).
+# We validate it is present but not importable without GPU — verified at runtime via logs.

@@ -55,15 +55,24 @@ Downloads etcd and nats-server from official GitHub releases and verifies SHA256
 bash "$REPO/scripts/fetch_vendor.sh"
 ```
 
-### 3. Build GPU venv (~30 min on H200, needs CUDA 13.x + autotools)
+### 3. Build and push GPU prefill Docker image (~20 min, login node only)
+
+Builds `Dockerfile.gpu` on top of `vllm/vllm-openai:v0.16.0`, adding UCX, NIXL,
+the vllm patch, and ai-dynamo. No GPU node required — runs on the login node.
 
 ```bash
-srun -p gpuonly -w sc3-c127 --gres=gpu:4 -c 16 --mem=65536 -t 01:30:00 \
-    bash "$REPO/scripts/build_gpu_venv.sh"
+bash "$REPO/scripts/build_docker_gpu.sh"
 ```
 
-> Uses sc3-c127 (not c129) to avoid consuming the RDU-prefill-experiment-test reservation during builds.
-> Clones UCX@`$UCX_COMMIT` and NIXL@`$NIXL_COMMIT` — both public on github.com.
+The image is pushed to `sc-artifacts2.sambanovasystems.com/sw-docker-scratch/rdu-hdi-gpu-prefill:$GPU_IMAGE_TAG`.
+The tag is set in `config/cluster.env` (`GPU_IMAGE_TAG`). Increment the `.N` suffix when UCX/NIXL commits or the vllm patch changes.
+
+> **Venv fallback**: if Docker is unavailable, the old venv approach still works:
+> ```bash
+> srun -p gpuonly -w sc3-c127 --gres=gpu:4 -c 16 --mem=65536 -t 01:30:00 \
+>     bash "$REPO/scripts/build_gpu_venv.sh"
+> ```
+> Then launch with `USE_VENV=1 bash launch/gpu_prefill.sh`.
 
 ### 4. Build RDU UCX + NIXL + wheels (~15 min)
 
@@ -99,12 +108,19 @@ snrdu run -sp zd3 --qos 5 --nodelist sc3-s339 --allow-local-lib-python \
 tail -f "$REPO/logs/build_rdu_venv.log"
 ```
 
-### Validate venvs (optional but recommended)
+### Validate (optional but recommended)
 
 ```bash
-# Validate GPU venv (run on GPU node)
-srun -p gpuonly -w sc3-c127 --gres=gpu:1 -c 2 --mem=8192 -t 00:05:00 \
-    bash "$REPO/scripts/test_rdu_imports.sh"  # reuses the import checks
+# Validate GPU image (smoke test on any GPU node)
+srun -p gpuonly -w sc3-c128 --gres=gpu:1 -c 1 --mem=4096 -t 00:05:00 \
+    bash -c "sudo -g docker /usr/bin/cuda-docker-run-wrapper --net=host --rm \
+        $GPU_IMAGE python3 -c \"
+import vllm; print('vllm:', vllm.__version__)
+from vllm.distributed.kv_transfer.kv_connector.v1.nixl_connector import REGISTER_CONSUMER_MSG
+print('vllm patch: OK')
+from nixl._api import nixl_agent; print('nixl: OK')
+import dynamo.vllm; print('dynamo.vllm: OK')
+\""
 
 # Validate RDU venv (run on s339)
 snrdu run -sp zd3 --qos 5 --nodelist sc3-s339 --allow-local-lib-python \
@@ -255,7 +271,7 @@ srun -p gpuonly -w sc3-c128 --gres=gpu:1 -c 1 --mem=4096 -t 00:05:00 \
 
 ### Future direction
 
-The GPU venv (`build_gpu_venv.sh`) could be replaced by a `Dockerfile` that layers UCX, NIXL, the vllm patch, and `ai-dynamo[vllm]` on top of `vllm/vllm-openai:v0.16.0`. Build on login node → push to internal registry → run on GPU nodes. RDU side stays as venv (BAR2 SDK is proprietary, can't be in a public image).
+RDU side could also be containerized once a SambaNova base image (Python 3.11 + torch 2.2.0+sn + BAR2 SDK) is available. Control plane (etcd + NATS + frontend) could use official Docker images if IT enables `docker run` on the login node. See `docs/local/INTEGRATION_REPO_PLAN_v2.md`.
 
 ---
 
