@@ -45,6 +45,7 @@ if [[ "${1:-}" == "--inner" ]]; then
         -e "VLLM_PD_CHUNK_OVERLAP=1" \
         -e "VLLM_PD_STAGE_TIMING=1" \
         -e "FLASHINFER_DISABLE_VERSION_CHECK=1" \
+        -e "VLLM_USE_DEEP_GEMM=0" \
         -e "HF_HOME=$GPU_CACHE_ROOT/huggingface" \
         -e "VLLM_CACHE_ROOT=$GPU_CACHE_ROOT/vllm" \
         -e "TRITON_CACHE_DIR=$GPU_CACHE_ROOT/triton" \
