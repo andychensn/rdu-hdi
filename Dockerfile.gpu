@@ -90,8 +90,10 @@ RUN NIXL_WHL=$(ls /tmp/nixl-wheels/nixl_cu12-*.whl | head -1) && \
     rm -rf /tmp/nixl-wheels
 
 # Install Dynamo Python modules (dynamo.vllm, dynamo.frontend)
+# Use base package WITHOUT [vllm] extra — the [vllm] extra upgrades vllm to 0.20.1
+# which breaks MiniMax-M2.7. The dynamo.vllm module is in the base ai-dynamo package.
 ARG DYNAMO_VERSION=1.2.1
-RUN pip install "ai-dynamo[vllm]==${DYNAMO_VERSION}"
+RUN pip install "ai-dynamo==${DYNAMO_VERSION}" "ai-dynamo-runtime==${DYNAMO_VERSION}"
 
 # Apply vllm nixl_connector patch (adds REGISTER_CONSUMER_MSG support).
 # Not in stock vllm 0.16.0 — tracked in sambanova/sn_vllm.
