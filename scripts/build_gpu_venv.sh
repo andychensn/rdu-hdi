@@ -145,9 +145,16 @@ echo "=== Step 4: ai-dynamo[vllm] $DYNAMO_VERSION ==="
 pip install -q "ai-dynamo[vllm]==$DYNAMO_VERSION"
 
 echo "=== Step 4: flashinfer $FLASHINFER_VERSION ==="
+# Install precompiled CUDA kernel binaries (flashinfer-cubin) and JIT cache
+# (flashinfer-jit-cache) matching the stock vllm Docker image, rather than
+# flashinfer-python alone which JIT-compiles kernels on first use.
+FLASHINFER_CUDA=$(echo "$TORCH_CUDA" | tr -d 'cu')  # cu130 -> 130
+pip install -q \
+    "flashinfer-cubin==$FLASHINFER_VERSION" \
+    "flashinfer-jit-cache==$FLASHINFER_VERSION" \
+    --extra-index-url "https://flashinfer.ai/whl/cu${FLASHINFER_CUDA}/" 2>/dev/null || \
 pip install -q "flashinfer-python==$FLASHINFER_VERSION" \
-    --find-links "https://flashinfer.ai/whl/cu130/torch2.9/" 2>/dev/null || \
-pip install -q "flashinfer-python==$FLASHINFER_VERSION"
+    --find-links "https://flashinfer.ai/whl/cu${FLASHINFER_CUDA}/torch2.9/"
 
 echo "=== Step 4: deep-gemm @$DEEPGEMM_COMMIT ==="
 # --no-build-isolation: setup.py imports torch; it must find the venv's torch
