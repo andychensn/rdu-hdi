@@ -180,12 +180,13 @@ build_on_rdu_node() {
         BUILD_TOOLS_DIR="$BUILD_TMP/build-tools"
         "$PY" -m pip install --prefix="$BUILD_TOOLS_DIR" \
             meson-python pybind11 patchelf pyyaml types-PyYAML setuptools build wheel ninja
-        # Locate meson/ninja — pip may put them in the prefix or in ~/.local/bin if already installed
-        MESON_BIN=$(find "$BUILD_TOOLS_DIR" "${HOME:-}" -name "meson" -type f 2>/dev/null | head -1 || \
+        # Locate meson/ninja — pip may install to prefix or user base (e.g. ~/.local)
+        USER_BASE=$("$PY" -c "import site; print(site.getuserbase())" 2>/dev/null || echo "")
+        MESON_BIN=$(find "$BUILD_TOOLS_DIR" "$USER_BASE" -name "meson" -type f 2>/dev/null | head -1 || \
                     command -v meson 2>/dev/null || true)
-        NINJA_BIN=$(find "$BUILD_TOOLS_DIR" "${HOME:-}" -name "ninja" -type f 2>/dev/null | head -1 || \
+        NINJA_BIN=$(find "$BUILD_TOOLS_DIR" "$USER_BASE" -name "ninja" -type f 2>/dev/null | head -1 || \
                     command -v ninja 2>/dev/null || true)
-        [ -n "$MESON_BIN" ] && export PATH="$(dirname "$MESON_BIN"):$PATH" || { echo "ERROR: meson not found anywhere"; exit 1; }
+        [ -n "$MESON_BIN" ] && export PATH="$(dirname "$MESON_BIN"):$PATH" || { echo "ERROR: meson not found in $BUILD_TOOLS_DIR or $USER_BASE"; exit 1; }
         [ -n "$NINJA_BIN" ] && export PATH="$(dirname "$NINJA_BIN"):$PATH" || true
         # Add site-packages from prefix so meson-python module is importable
         SITE_PKG=$(find "$BUILD_TOOLS_DIR" -type d -name "site-packages" 2>/dev/null | head -1)
