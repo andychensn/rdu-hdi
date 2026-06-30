@@ -115,8 +115,9 @@ RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__)
 # only accepts ABI 1 — causing UCX to crash. Building v58 produces a native Ubuntu .so
 # that accepts ABI 8, matching the host. No Broadcom tarball or gated download needed.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        cmake ninja-build libnl-3-dev libnl-route-3-dev libudev-dev python3-dev \
-        dpkg-dev pkg-config pandoc python3-docutils git \
+        cmake ninja-build git \
+        libnl-3-200 libnl-3-dev libnl-route-3-200 libnl-route-3-dev \
+        libudev-dev python3-dev dpkg-dev pkg-config pandoc python3-docutils \
     && rm -rf /var/lib/apt/lists/* && \
     git clone --depth=1 --branch v58.1 \
         https://github.com/linux-rdma/rdma-core.git /tmp/rdma-core && \
