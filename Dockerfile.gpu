@@ -112,9 +112,4 @@ RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__)
 RUN python3 -c "import vllm; print('vllm:', vllm.__version__)" && \
     python3 -c "from nixl._api import nixl_agent; print('nixl: OK')" && \
     python3 -c "import dynamo.vllm; print('dynamo.vllm: OK')" && \
-    python3 -c "import dynamo.frontend; print('dynamo.frontend: OK')" && \
-    python3 -c "
-VLLM_DIR=__import__('os').path.dirname(__import__('vllm').__file__)
-NC=__import__('subprocess').run(['find',VLLM_DIR,'-name','nixl_connector.py'],capture_output=True,text=True).stdout.strip()
-print('nixl_connector.py:', NC if NC else 'NOT FOUND (vllm image may not include KV connectors)')
-" 2>/dev/null || true
+    python3 -c "import dynamo.frontend; print('dynamo.frontend: OK')"
