@@ -34,8 +34,10 @@ if [[ "${1:-}" == "--inner" ]]; then
         [ -e "$dev" ] && RDMA_DEVICES="$RDMA_DEVICES --device $dev"
     done
     exec sudo -g docker /usr/bin/cuda-docker-run-wrapper \
+        --pull=always \
         --net=host --rm \
         --entrypoint python3 \
+        --ulimit memlock=-1 \
         $RDMA_DEVICES \
         -e "ETCD_ENDPOINTS=http://$CONTROL_PLANE_IP:$ETCD_PORT" \
         -e "NATS_SERVER=nats://$CONTROL_PLANE_IP:$NATS_PORT" \
