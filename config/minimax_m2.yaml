@@ -8,6 +8,10 @@ task: autoregressive
 # Multi-token prediction: MiniMax-M2 PEF generates 20 tokens per coe_model.run()
 num_tokens_at_a_time: 20
 
+# Batch size: static 2 (PEF compiled with BS2 in name: CoE_ckpt_sharing_BS2_...)
+# Static int, not a range — the PEF has fixed batch size
+bs: 2
+
 # Dynamic tensor dims (PEF compiled with variable-size dims)
 dynamic_tensor: true
 
