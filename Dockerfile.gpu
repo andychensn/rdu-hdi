@@ -135,16 +135,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Patch dynamo.vllm.multimodal_utils.protocol for vllm 0.16.0 compatibility.
 # ai-dynamo 1.2.1 imports MultiModalUUIDDict which was added in vllm 0.20.x.
-RUN python3 -c "
-import pathlib
-proto = pathlib.Path('/usr/local/lib/python3.12/dist-packages/dynamo/vllm/multimodal_utils/protocol.py')
-if proto.exists():
-    txt = proto.read_text()
-    old = 'from vllm.inputs import MultiModalUUIDDict, TokensPrompt  # noqa: F401'
-    new = 'try:\n    from vllm.inputs import MultiModalUUIDDict, TokensPrompt  # noqa: F401\nexcept ImportError:\n    MultiModalUUIDDict = dict  # vllm < 0.20 compat\n    try:\n        from vllm.inputs import TokensPrompt\n    except ImportError:\n        TokensPrompt = dict'
-    proto.write_text(txt.replace(old, new))
-    print('protocol.py patched for vllm 0.16.0 compat')
-"
+RUN python3 -c "import pathlib; p=pathlib.Path('/usr/local/lib/python3.12/dist-packages/dynamo/vllm/multimodal_utils/protocol.py'); t=p.read_text() if p.exists() else ''; p.write_text(t.replace('from vllm.inputs import MultiModalUUIDDict, TokensPrompt  # noqa: F401', 'try:\n    from vllm.inputs import MultiModalUUIDDict, TokensPrompt\nexcept ImportError:\n    MultiModalUUIDDict=dict\n    TokensPrompt=dict')) if p.exists() else None; print('protocol.py patched' if p.exists() else 'not found')"
 
 # Validate the image at build time
 RUN python3 -c "import vllm; print('vllm:', vllm.__version__)" && \
