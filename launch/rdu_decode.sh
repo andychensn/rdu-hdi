@@ -57,7 +57,10 @@ if [[ "${1:-}" == "--inner" ]]; then
         {
             cat "$RDU_CONFIG"
             echo "pef_path: $PEF"
-            echo "checkpoint_path: $MODEL"
+            # RDU_CKPT: packed FP8 checkpoint on s339's local /scratch.
+            # Must NOT use MODEL (HF BF16 checkpoint) — the PEF expects the
+            # pre-packed format; mixing causes FP8→BF16 dtype conversion failures.
+            echo "checkpoint_path: ${RDU_CKPT:-$MODEL}"
         } > "$RDU_CONFIG_RUNTIME"
         RDU_CONFIG="$RDU_CONFIG_RUNTIME"
         echo "  rdu_config: $RDU_CONFIG_RUNTIME (pef_path + checkpoint_path added)"

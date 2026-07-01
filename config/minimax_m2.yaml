@@ -1,5 +1,29 @@
-# RDU configuration for MiniMax-M2.x FP8
-# Passed via --additional-config '{"rdu_config": "/path/to/this/file"}' in rdu_decode.sh
-# Fields must match RduConfig in vllm-rdu/rdu_executor/config.py.
-# model_name/dtype/tensor_parallel_size were removed (not RduConfig fields).
+# RDU configuration for MiniMax-M2.7 FP8 on SN40L.
+# Schema: RduConfig from vllm-rdu/rdu_executor/config.py
+# DimSpec format: [min, max, step] (list) or int (static)
+# pef_path and checkpoint_path are added dynamically in rdu_decode.sh --inner.
+
 task: autoregressive
+
+# Multi-token prediction: MiniMax-M2 PEF generates 20 tokens per coe_model.run()
+num_tokens_at_a_time: 20
+
+# Dynamic tensor dims (PEF compiled with variable-size dims)
+dynamic_tensor: true
+
+# Dim names from the PEF: TP16_ssSS_CG_SS_MAX_SS_TG
+kv_dim_name: SS_MAX
+prefill_dim_name: SS_CG
+decode_dim_name: SS_TG
+
+# KV dim: set at load time (not runtime) — [min, max, step]
+kv_set_at: load
+kv: [4096, 196608, 4096]
+
+# Prefill dim: set at runtime per-request
+prefill_set_at: runtime
+prefill: [4096, 196608, 4096]
+
+# Decode dim: set at runtime per-request
+decode_set_at: runtime
+decode: [4096, 196608, 4096]
