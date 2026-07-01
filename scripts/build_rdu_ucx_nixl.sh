@@ -74,6 +74,37 @@ fetch_sources() {
         echo "  vllm wheel already present: $VLLM_WHL"
     fi
 
+    # gguf + regex — needed by vllm.transformers_utils.gguf_utils (loaded at import time).
+    # gguf is a pure-Python GGUF model reader; regex is its C-ext string library.
+    # Neither is in the SambaNova system Python. Not used at runtime for HF models,
+    # but the module-level import in vllm 0.16.0 means both must be present.
+    if ! find "$WHEEL_OUT" -name "gguf-*.whl" 2>/dev/null | grep -q .; then
+        echo "  Downloading gguf..."
+        python3.12 -m pip download "gguf>=0.17.0" --only-binary=:all: --no-deps --dest "$WHEEL_OUT" 2>&1 | tail -2
+        echo "  gguf wheel ✅"
+    else
+        echo "  gguf wheel already present"
+    fi
+    if ! find "$WHEEL_OUT" -name "regex-*.whl" 2>/dev/null | grep -q .; then
+        echo "  Downloading regex..."
+        python3.12 -m pip download "regex" --only-binary=:all: --no-deps \
+            --python-version 311 --platform manylinux_2_17_x86_64 --dest "$WHEEL_OUT" 2>&1 | tail -2
+        echo "  regex wheel ✅"
+    else
+        echo "  regex wheel already present"
+    fi
+
+    # numpy pinned wheel — system s339 may have newer numpy (2.x) compiled against
+    # incompatible ABI; we install 1.26.4 into the venv to override it.
+    if ! find "$WHEEL_OUT" -name "numpy-${RDU_NUMPY_VERSION}-cp311-*.whl" 2>/dev/null | grep -q .; then
+        echo "  Downloading numpy==$RDU_NUMPY_VERSION (cp311 wheel for s339)..."
+        python3.12 -m pip download "numpy==$RDU_NUMPY_VERSION" --only-binary=:all: --no-deps \
+            --python-version 311 --platform manylinux_2_17_x86_64 --dest "$WHEEL_OUT" 2>&1 | tail -2
+        echo "  numpy wheel ✅"
+    else
+        echo "  numpy wheel already present"
+    fi
+
     # ai-dynamo-runtime (Rust compiled bindings) + ai-dynamo (Python app code)
     # Both downloaded with --no-deps; installed separately on s339 to avoid
     # pulling vllm/torch as pip dependencies (already installed from wheelhouse).
