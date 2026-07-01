@@ -93,20 +93,35 @@ build_wheel() {
 
     mkdir -p "$WHEEL_OUT"
 
-    # setuptools<77: newer versions reject vllm's non-SPDX license in pyproject.toml
-    echo "  Installing build tools..."
-    "$PY" -m pip install --user "setuptools<77" wheel 2>&1 | tail -2
+    # Fix vllm pyproject.toml license field:
+    # - "Apache 2.0" is not valid SPDX → setuptools 77+ rejects it
+    # - pip 22.3.1 (on s339) requires object format {text=...} not a bare string
+    # Result: license = {text = "Apache-2.0"} satisfies both old pip and new setuptools.
+    sed -i 's/^license = {text = "Apache 2\.0"}$/license = {text = "Apache-2.0"}/' "$VLLM_SRC/pyproject.toml" 2>/dev/null || true
+    sed -i 's/^license = "Apache 2\.0"$/license = {text = "Apache-2.0"}/' "$VLLM_SRC/pyproject.toml" 2>/dev/null || true
+    sed -i 's/^license = "Apache-2\.0"$/license = {text = "Apache-2.0"}/' "$VLLM_SRC/pyproject.toml" 2>/dev/null || true
+    # license-files is a PEP 639 field; older setuptools rejects it as unknown property
+    sed -i '/^license-files = /d' "$VLLM_SRC/pyproject.toml" 2>/dev/null || true
 
-    echo "  Building CPU-only wheel..."
+    # HOME may be unset in snrdu jobs; pip needs it for temp dirs
+    export HOME="${HOME:-/tmp}"
+
+    # Build with --no-build-isolation so vllm's setup.py can import the system torch.
+    # The license fix above (Apache-2.0 SPDX) ensures any setuptools version accepts it.
+    # VLLM_TARGET_DEVICE=empty: tells setup.py to set ext_modules=[] (no cmake, no C extensions).
+    # This produces a pure-Python wheel. The RDU decode only needs vllm's Python scheduling
+    # code; it never calls GPU C extensions directly (those are stubbed or handled by vllm-rdu).
+    echo "  Building pure-Python wheel (no cmake, ~1 min)..."
     cd "$VLLM_SRC"
-    VLLM_TARGET_DEVICE=cpu \
+    VLLM_TARGET_DEVICE=empty \
     SETUPTOOLS_SCM_PRETEND_VERSION="${VLLM_VERSION}+cpu" \
         "$PY" -m pip wheel . \
         --no-deps \
         --no-build-isolation \
-        --wheel-dir "$WHEEL_OUT" 2>&1 | tail -15
+        --no-cache-dir \
+        --wheel-dir "$WHEEL_OUT"
 
-    WHL=$(find "$WHEEL_OUT" -name "vllm-${VLLM_VERSION}+cpu-cp311*.whl" | head -1 || true)
+    WHL=$(find "$WHEEL_OUT" -name "vllm-${VLLM_VERSION}+cpu*.whl" | head -1 || true)
     if [ -n "$WHL" ]; then
         echo ""
         echo "=== Done: $WHL ==="

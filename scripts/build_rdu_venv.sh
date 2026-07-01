@@ -22,7 +22,7 @@ WHEELHOUSE=$REPO_ROOT/wheelhouse
 
 # Prefer the +cpu wheel (torch 2.2.x compat patches baked in) over the standard wheel.
 # build_vllm_cpu_wheel.sh produces vllm-<ver>+cpu-cp311-cp311-linux_x86_64.whl.
-VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*+cpu-cp311*.whl" 2>/dev/null | head -1 || \
+VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*+cpu*.whl" 2>/dev/null | head -1 || \
                find "$WHEELHOUSE" -name "vllm-*linux_x86_64.whl" 2>/dev/null | head -1 || true)
 NIXL_WHL=$(find "$WHEELHOUSE" -name "nixl_cu12*cp311*.whl" 2>/dev/null | head -1 || true)
 DYNAMO_RUNTIME_WHL=$(find "$WHEELHOUSE" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | head -1 || true)
@@ -73,12 +73,18 @@ else
     fi
 fi
 
-# Verify REGISTER_CONSUMER_MSG patch (from vllm_nixl_connector.patch — applied to vllm source)
+# Apply REGISTER_CONSUMER_MSG patch to nixl_connector.py post-install.
+# This patch adds chunk-overlap KV transfer support for P/D disaggregation.
 NIXL_PY=$(find "$VENV" -name "nixl_connector.py" -path "*/kv_connector*" 2>/dev/null | head -1)
+NIXL_PATCH="$REPO_ROOT/patches/vllm_nixl_connector.patch"
 if grep -q "REGISTER_CONSUMER_MSG" "$NIXL_PY" 2>/dev/null; then
-    echo "  REGISTER_CONSUMER_MSG present ✅"
-else
-    echo "WARNING: REGISTER_CONSUMER_MSG not found — apply patches/vllm_nixl_connector.patch to vllm source"
+    echo "  REGISTER_CONSUMER_MSG already present ✅"
+elif [ -f "$NIXL_PATCH" ] && [ -n "$NIXL_PY" ]; then
+    # Apply patch relative to the venv site-packages
+    SITE_PKG=$(dirname "$(dirname "$(dirname "$NIXL_PY")")")
+    cd "$SITE_PKG" && patch -p1 < "$NIXL_PATCH" && echo "  vllm_nixl_connector.patch applied ✅" || \
+        echo "WARNING: nixl_connector patch failed — VLLM_PD_CHUNK_OVERLAP=1 may not work"
+    cd "$REPO_ROOT"
 fi
 
 # ── numpy pin ─────────────────────────────────────────────────────────────────
