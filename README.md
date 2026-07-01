@@ -153,6 +153,7 @@ Both require `sudo -g docker`. Internal registry: `sc-artifacts2.sambanovasystem
 ## Known gaps
 
 - **vllm nixl_connector patch**: `REGISTER_CONSUMER_MSG` not in stock vllm 0.16.0 — applied in `Dockerfile.gpu`. Source: `sambanova/sn_vllm`.
+- **dynamo.vllm protocol patch**: `ai-dynamo 1.2.1` imports `MultiModalUUIDDict` from vllm (added in 0.20.x). Patched in `Dockerfile.gpu` to be conditional.
 - **RDU torch compat**: s339 has `torch 2.2.0+sn`; vllm 0.16.0 uses torch 2.4+ APIs. Two files patched by `build_rdu_venv.sh`. Long-term fix: RDU Docker image with matching torch.
 
 ## Component repos
@@ -164,22 +165,12 @@ Both require `sudo -g docker`. Internal registry: `sc-artifacts2.sambanovasystem
 | [`andychensn/vllm-rdu`](https://github.com/andychensn/vllm-rdu) | vLLM plugin for SambaNova RDU |
 | [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | Source of `patches/vllm_nixl_connector.patch` |
 
-## Docker GPU prefill status
+## Docker GPU prefill — notes
 
-The GPU prefill Docker image builds and runs but fails during NIXL initialization:
-```
-uct_mem.c:482  Assertion `mem.memh != UCT_MEM_HANDLE_NULL' failed
-```
+Docker works. Key non-obvious fixes required:
 
-**Root cause**: UCX cannot register CUDA GPU memory for cross-node transfer inside Docker.
-NIXL needs GPU-Direct RDMA (CUDA memory → RDMA NIC) which requires:
-1. The host bnxt_re kernel module supports ibverbs ABI 8 (currently only ABI 1)
-2. OR `nvidia_peermem` kernel module loaded (not loaded on sc3-c128)
+1. **`--shm-size=1g`**: Docker's default 64MB `/dev/shm` is exhausted by UCX's IB transport when allocating receive descriptor pools (~4MB × 4 TP workers). Without this, UCX fails with `uct_mem.c:482 Assertion mem.memh != UCT_MEM_HANDLE_NULL`.
 
-The Docker image's Ubuntu 22.04 libibverbs (ABI 8) is incompatible with the host's bnxt_re driver (ABI 1), causing all RoCE adapters to fail device initialization.
+2. **Broadcom OOT `libbnxt_re`**: Ubuntu's inbox `libbnxt_re-rdmav34.so` sends wrong UVERBS attributes to the host's Broadcom OOT bnxt_re kernel driver (237.1.137.0), causing `EINVAL`. Fixed by building from source: `/import/it-tools/idc/fw/brcm/237/bcm_237.1.148.0a/drivers_linux/bnxt_rocelib/libbnxt_re-237.1.137.0.tar.gz` (shipped with `rc-compat/v39` for Ubuntu 22.04 compatibility).
 
-**Confirmed working natively** (v3 venv) on both sc3-c128 and sc3-c129.
-
-**IT ask**: Update bnxt_re kernel driver to support ibverbs ABI 8, or load `nvidia_peermem` module on GPU nodes.
-
-**Workaround**: Use `USE_VENV=1 bash launch/gpu_prefill.sh` (see v3 venv setup) until Docker fix is available.
+3. **`--pull=always`**: Without this, GPU nodes use a stale cached image and don't get Dockerfile updates.

@@ -5,7 +5,7 @@
 #   - UCX 1.22 (andychensn/ucx@sn/v1.22) — bnxt_re RoCE RDMA support
 #   - NIXL (andychensn/nixl@sn/rdu-working) — KV cache transfer library
 #   - vllm nixl_connector patch — adds REGISTER_CONSUMER_MSG handshake
-#   - ai-dynamo[vllm] — dynamo.vllm + dynamo.frontend Python modules
+#   - ai-dynamo — dynamo.vllm + dynamo.frontend Python modules (no [vllm] extra: that upgrades vllm to 0.20.x)
 #
 # Build (from login node sc-vnc9):
 #   bash scripts/build_docker_gpu.sh
