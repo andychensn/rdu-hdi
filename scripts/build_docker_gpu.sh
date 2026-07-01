@@ -29,6 +29,35 @@ done
 
 FULL_IMAGE="$REGISTRY/$IMAGE_NAME:$GPU_IMAGE_TAG"
 
+# ── Broadcom OOT libbnxt_re ───────────────────────────────────────────────────
+# The host GPU nodes run Broadcom's OOT bnxt_re kernel driver (v237.1.137.0),
+# which requires matching OOT userspace (libbnxt_re). Ubuntu's inbox version
+# sends incompatible UVERBS attributes causing ibv_open_device EINVAL.
+#
+# This tarball is IT-managed infrastructure software (like CUDA for NVIDIA),
+# delivered to SambaNova by Broadcom as part of the NIC hardware support.
+# IT maintains the canonical copy at the path below.
+#
+# If this path is missing, contact IT (ask Kurt McDougall or check
+# /import/it-tools/idc/fw/brcm/ for the latest version).
+BRCM_ROCELIB=/import/it-tools/idc/fw/brcm/237/bcm_237.1.148.0a/drivers_linux/bnxt_rocelib
+BRCM_TARBALL="$BRCM_ROCELIB/libbnxt_re-237.1.137.0.tar.gz"
+RDMA_LIBS_DIR="$REPO_ROOT/.rdma-libs"
+
+mkdir -p "$RDMA_LIBS_DIR"
+if [ ! -f "$RDMA_LIBS_DIR/libbnxt_re-237.1.137.0.tar.gz" ]; then
+    echo "=== Copying Broadcom OOT libbnxt_re from IT-managed path ==="
+    [ -f "$BRCM_TARBALL" ] || {
+        echo "ERROR: Broadcom tarball not found at $BRCM_TARBALL"
+        echo "  Contact IT to restore it, or check /import/it-tools/idc/fw/brcm/"
+        exit 1
+    }
+    cp "$BRCM_TARBALL" "$RDMA_LIBS_DIR/"
+    echo "  Copied: $(basename $BRCM_TARBALL)"
+else
+    echo "=== Broadcom OOT libbnxt_re already in .rdma-libs/ ==="
+fi
+
 echo "=== Building $FULL_IMAGE ==="
 echo "    vllm:    $VLLM_VERSION"
 echo "    UCX:     $UCX_COMMIT"
