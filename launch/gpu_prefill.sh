@@ -47,7 +47,7 @@ if [[ "${1:-}" == "--inner" ]]; then
         -e "VLLM_PD_CHUNK_OVERLAP=1" \
         -e "VLLM_PD_STAGE_TIMING=1" \
         -e "FLASHINFER_DISABLE_VERSION_CHECK=1" \
-        -e "VLLM_USE_DEEP_GEMM=1" \
+        -e "VLLM_USE_DEEP_GEMM=0" \
         --shm-size=1g \
         -e "UCX_MODULE_DIR=/opt/ucx/lib/ucx" \
         -e "HF_HOME=$GPU_CACHE_ROOT/huggingface" \
