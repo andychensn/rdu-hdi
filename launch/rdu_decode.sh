@@ -48,6 +48,21 @@ if [[ "${1:-}" == "--inner" ]]; then
         RDU_CONFIG=""
     }
 
+    # Generate a runtime YAML that merges the static model config with the
+    # environment-specific pef_path and checkpoint_path (required by RduConfig).
+    # RduConfig.pef_path must match the PEF passed to snrdu; checkpoint_path = model.
+    if [ -n "$RDU_CONFIG" ]; then
+        RDU_CONFIG_RUNTIME="${RDU_CACHE}/rdu_config_runtime.yaml"
+        mkdir -p "$RDU_CACHE"
+        {
+            cat "$RDU_CONFIG"
+            echo "pef_path: $PEF"
+            echo "checkpoint_path: $MODEL"
+        } > "$RDU_CONFIG_RUNTIME"
+        RDU_CONFIG="$RDU_CONFIG_RUNTIME"
+        echo "  rdu_config: $RDU_CONFIG_RUNTIME (pef_path + checkpoint_path added)"
+    fi
+
     PYTHONNOUSERSITE=1 \
     ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \
     NATS_SERVER="nats://$CONTROL_PLANE_IP:$NATS_PORT" \

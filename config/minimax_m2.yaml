@@ -1,7 +1,5 @@
 # RDU configuration for MiniMax-M2.x FP8
-# Passed via --additional-config '{"rdu_config": "/path/to/this/file"}' in rdu_inner.sh
-# Model-specific settings that the RDU scheduler uses to configure the PEF execution.
-
-model_name: MiniMax-M2.7
-dtype: fp8
-tensor_parallel_size: 16
+# Passed via --additional-config '{"rdu_config": "/path/to/this/file"}' in rdu_decode.sh
+# Fields must match RduConfig in vllm-rdu/rdu_executor/config.py.
+# model_name/dtype/tensor_parallel_size were removed (not RduConfig fields).
+task: autoregressive

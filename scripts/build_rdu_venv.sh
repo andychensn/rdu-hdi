@@ -22,7 +22,9 @@ WHEELHOUSE=$REPO_ROOT/wheelhouse
 
 # Prefer the +cpu wheel (torch 2.2.x compat patches baked in) over the standard wheel.
 # build_vllm_cpu_wheel.sh produces vllm-<ver>+cpu-cp311-cp311-linux_x86_64.whl.
-VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*+cpu*.whl" 2>/dev/null | head -1 || \
+# Prefer cp311 platform wheel (has compiled vllm._C) over py3-none-any (pure Python)
+VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*+cpu-cp311*.whl" 2>/dev/null | head -1 || \
+               find "$WHEELHOUSE" -name "vllm-*+cpu*.whl" 2>/dev/null | head -1 || \
                find "$WHEELHOUSE" -name "vllm-*linux_x86_64.whl" 2>/dev/null | head -1 || true)
 NIXL_WHL=$(find "$WHEELHOUSE" -name "nixl_cu12*cp311*.whl" 2>/dev/null | head -1 || true)
 DYNAMO_RUNTIME_WHL=$(find "$WHEELHOUSE" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | head -1 || true)
@@ -57,20 +59,27 @@ pip install -q --no-deps "$VLLM_CPU_WHL"
 
 # If using standard upstream wheel (not +cpu), apply torch 2.2.x compat patches.
 # The +cpu wheel already has these baked in (env_override.py + torch_utils.py).
-if echo "$VLLM_CPU_WHL" | grep -q "+cpu"; then
-    echo "  Using +cpu wheel — torch 2.2.x patches already baked in ✅"
-else
-    echo "  Upstream wheel detected — applying torch 2.2.x compat patches..."
-    COMPAT_SHIM="$REPO_ROOT/patches/vllm_env_override_torch22x.py"
-    ENV_OVERRIDE=$(find "$VENV" -name "env_override.py" -path "*/vllm/*" 2>/dev/null | head -1)
-    [ -f "$COMPAT_SHIM" ] && [ -n "$ENV_OVERRIDE" ] && \
-        cp "$COMPAT_SHIM" "$ENV_OVERRIDE" && echo "  env_override.py: compat shim applied"
+# Always apply torch 2.2.x compat patches — the +cpu wheel built with VLLM_TARGET_DEVICE=empty
+# may not have these baked in (pip caches/empty-target build can use unpatched system files).
+echo "  Applying torch 2.2.x compat patches..."
 
-    TORCH_UTILS=$(find "$VENV" -name "torch_utils.py" -path "*/vllm/*" 2>/dev/null | head -1)
-    if grep -q "^from torch.library import Library, infer_schema" "$TORCH_UTILS" 2>/dev/null; then
-        sed -i 's/^from torch.library import Library, infer_schema$/try:\n    from torch.library import Library, infer_schema\n    _infer_schema_available = True\nexcept ImportError:\n    from torch.library import Library\n    _infer_schema_available = False\n    def infer_schema(func, *args, **kwargs): return ""/' "$TORCH_UTILS"
-        echo "  torch_utils.py: _infer_schema_available + guard added"
-    fi
+# env_override.py: comprehensive torch 2.2.x compat shim
+COMPAT_SHIM="$REPO_ROOT/patches/vllm_env_override_torch22x.py"
+ENV_OVERRIDE=$(find "$VENV" -name "env_override.py" -path "*/vllm/*" 2>/dev/null | head -1)
+[ -f "$COMPAT_SHIM" ] && [ -n "$ENV_OVERRIDE" ] && \
+    cp "$COMPAT_SHIM" "$ENV_OVERRIDE" && echo "  env_override.py: compat shim applied ✅"
+
+# torch_utils.py: _infer_schema_available guard for direct_register_custom_op
+TORCH_UTILS=$(find "$VENV" -name "torch_utils.py" -path "*/vllm/*" 2>/dev/null | head -1)
+if grep -q "^from torch.library import Library, infer_schema" "$TORCH_UTILS" 2>/dev/null; then
+    sed -i 's/^from torch.library import Library, infer_schema$/try:\n    from torch.library import Library, infer_schema\n    _infer_schema_available = True\nexcept ImportError:\n    from torch.library import Library\n    _infer_schema_available = False\n    def infer_schema(func, *args, **kwargs): return ""/' "$TORCH_UTILS"
+    echo "  torch_utils.py: _infer_schema_available flag added ✅"
+fi
+if grep -q "^def direct_register_custom_op" "$TORCH_UTILS" 2>/dev/null && \
+   ! grep -A3 "^def direct_register_custom_op" "$TORCH_UTILS" | grep -q "_infer_schema_available"; then
+    sed -i '/^def direct_register_custom_op/,/^    """/{/^    """/i\    if not _infer_schema_available:\n        return
+}' "$TORCH_UTILS" 2>/dev/null || true
+    echo "  direct_register_custom_op: early-return guard added ✅"
 fi
 
 # Apply REGISTER_CONSUMER_MSG patch to nixl_connector.py post-install.
@@ -134,6 +143,16 @@ install_whl "httpcore-*.whl"          # httpx dep
 install_whl "httpx-*.whl"             # vllm client
 install_whl "openai-*.whl"            # vllm benchmarking
 install_whl "compressed_tensors-*.whl" # vllm quantization
+install_whl "openai_harmony-*.whl"     # vllm.entrypoints.mcp.tool_server
+install_whl "mcp-*.whl"               # vllm MCP support
+install_whl "mistral_common-*.whl"    # vllm tokenizer support
+install_whl "docstring_parser-*.whl"  # vllm dependency
+install_whl "durationpy-*.whl"        # dynamo dependency
+install_whl "email_validator-*.whl"   # fastapi/openai dependency
+install_whl "h11-*.whl"              # httpx dependency
+install_whl "fastar-*.whl"           # vllm dependency
+install_whl "llguidance-*.whl"       # vllm structured output
+install_whl "lm_format_enforcer-*.whl" # vllm structured output
 
 # ── Dynamo runtime ────────────────────────────────────────────────────────────
 echo "=== ai-dynamo-runtime + ai-dynamo ==="

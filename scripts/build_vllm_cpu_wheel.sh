@@ -80,6 +80,47 @@ fetch_and_patch() {
         echo "  direct_register_custom_op: guard already present ✅"
     fi
 
+    # Patch 3: csrc/cpu/utils.cpp — define VLLM_NUMA_DISABLED at source level.
+    # cmake's add_compile_definitions(-DVLLM_NUMA_DISABLED) has a leading-dash bug;
+    # the define never reaches the preprocessor. Adding it directly to the source
+    # is more reliable and avoids the cmake bug entirely.
+    UTILS_CPP="$VLLM_SRC/csrc/cpu/utils.cpp"
+    if ! grep -q "^#define VLLM_NUMA_DISABLED" "$UTILS_CPP" 2>/dev/null; then
+        sed -i '1s/^/#define VLLM_NUMA_DISABLED  \/\/ numactl-devel not installed on build node\n/' "$UTILS_CPP"
+        echo "  csrc/cpu/utils.cpp: VLLM_NUMA_DISABLED defined ✅"
+    fi
+
+    # Patch 4: cmake/cpu_extension.cmake — auto-detect NUMA properly.
+    # The original cmake hardcodes ENABLE_NUMA=TRUE and only disables for Apple Silicon.
+    # s339 has libnuma.so.1 (runtime) but NOT libnuma.so (needs numactl-devel).
+    # cmake's find_library(numa) correctly returns NOT FOUND for missing .so → NUMA disabled.
+    python3 << 'PYEOF'
+import sys
+content = open(sys.argv[1]).read()
+old = '\nset (ENABLE_NUMA TRUE)\n'
+new = '''
+find_library(LIBNUMA_LIB NAMES numa PATHS /usr/lib64 /usr/lib)
+if(LIBNUMA_LIB)
+    set(ENABLE_NUMA TRUE)
+else()
+    set(ENABLE_NUMA FALSE)
+    message(STATUS "NUMA: libnuma.so not found (numactl-devel not installed), disabling")
+endif()
+'''
+if old not in content:
+    print('  ENABLE_NUMA patch: already applied or pattern changed, skipping')
+    sys.exit(0)
+open(sys.argv[1], 'w').write(content.replace(old, new))
+print('  cmake ENABLE_NUMA auto-detect: patched ✅')
+PYEOF
+    python3 - "$VLLM_SRC/cmake/cpu_extension.cmake" 2>/dev/null || echo "  NUMA cmake patch: failed (may already be patched)"
+
+    # Patch 5: cmake/cpu_extension.cmake — remove mla_decode.cpp (requires AVX-512,
+    # s339 has AMD EPYC 7742 = AVX2 only). The RDU decode side only needs vllm._C
+    # for model architecture inspection, not for CPU MLA inference.
+    sed -i '/"csrc\/cpu\/mla_decode.cpp"/d' "$VLLM_SRC/cmake/cpu_extension.cmake" 2>/dev/null || true
+    echo "  cmake/cpu_extension.cmake: mla_decode.cpp removed ✅"
+
     echo ""
     echo "=== Phase 1 complete. Run Phase 2 on s339. ==="
     echo "  snrdu run ... -- bash scripts/build_vllm_cpu_wheel.sh --build-only"
@@ -106,14 +147,20 @@ build_wheel() {
     # HOME may be unset in snrdu jobs; pip needs it for temp dirs
     export HOME="${HOME:-/tmp}"
 
-    # Build with --no-build-isolation so vllm's setup.py can import the system torch.
-    # The license fix above (Apache-2.0 SPDX) ensures any setuptools version accepts it.
-    # VLLM_TARGET_DEVICE=empty: tells setup.py to set ext_modules=[] (no cmake, no C extensions).
-    # This produces a pure-Python wheel. The RDU decode only needs vllm's Python scheduling
-    # code; it never calls GPU C extensions directly (those are stubbed or handled by vllm-rdu).
-    echo "  Building pure-Python wheel (no cmake, ~1 min)..."
+    # Build with VLLM_TARGET_DEVICE=cpu to compile vllm._C (needed for model inspection).
+    # Key cmake flags:
+    # - CMAKE_PREFIX_PATH=/opt/sambanova: finds SambaNova's bundled protobuf
+    #   (Caffe2Config.cmake requires it; libprotobuf.so is in /opt/sambanova/lib/)
+    # - CMAKE_CXX_FLAGS=-DVLLM_NUMA_DISABLED: skips numa.h include (numactl-devel not installed)
+    # mla_decode.cpp was removed in --fetch-only phase (requires AVX-512; s339 = AMD EPYC 7742 = AVX2 only)
+    export PKG_CONFIG_PATH="/opt/sambanova/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+    # ENABLE_NUMA=OFF: tells cmake to skip -lnuma link and add -DVLLM_NUMA_DISABLED compile flag.
+    # numactl-devel not installed on s339 (libnuma.so.1 exists but no unversioned .so symlink).
+    export CMAKE_ARGS="-DCMAKE_PREFIX_PATH=/opt/sambanova -DENABLE_NUMA=OFF"
+
+    echo "  Building CPU wheel with compiled vllm._C (~2-3 min)..."
     cd "$VLLM_SRC"
-    VLLM_TARGET_DEVICE=empty \
+    VLLM_TARGET_DEVICE=cpu \
     SETUPTOOLS_SCM_PRETEND_VERSION="${VLLM_VERSION}+cpu" \
         "$PY" -m pip wheel . \
         --no-deps \
