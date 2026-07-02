@@ -101,6 +101,7 @@ if [[ "${1:-}" == "--inner" ]]; then
     SF_RNT_DMA_POLL_BUSY_WAIT=1 \
     SF_RNT_NUMA_BIND=2 \
     SF_RNT_LOG_LEVEL=ERR \
+    VLLM_RDU_PLUGIN_DEBUG=1 \
     AL_EXEC_LOOPING=1 \
     GRAPH_TIMEOUT_USEC=120000000 \
     TRITON_CACHE_DIR="$RDU_CACHE/triton" \

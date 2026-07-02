@@ -107,6 +107,42 @@ if [ -n "$PUBLISHER_PY" ] && grep -q "^        active_decode_blocks = int(self.n
     echo "  publisher.py: negative kv_cache_usage clamp applied ✅"
 fi
 
+# nixl_connector.py (stock vLLM, not vllm-rdu): _pop_done_transfers treats a
+# telemetry-retrieval failure as a transfer failure, even when
+# check_xfer_state already confirmed "DONE". capture_telemetry defaults to
+# False on the NIXL agent, so get_xfer_telemetry ALWAYS raises
+# NIXL_ERR_NO_TELEMETRY unless the agent was explicitly built with
+# capture_telemetry=True — meaning every single completed transfer was being
+# misclassified as failed, triggering an ~24s KV-load-failure reschedule on
+# EVERY request (measured: ~25s/request instead of the expected <1s).
+STOCK_NIXL_PY=$(find "$VENV" -name "nixl_connector.py" -path "*/vllm/distributed/*" 2>/dev/null | head -1)
+if [ -n "$STOCK_NIXL_PY" ] && grep -q "^                        res = self.nixl_wrapper.get_xfer_telemetry(handle)$" "$STOCK_NIXL_PY" 2>/dev/null; then
+    python3 - "$STOCK_NIXL_PY" <<'PYEOF'
+import sys
+path = sys.argv[1]
+old = '''                    if xfer_state == "DONE":
+                        # Get telemetry from NIXL
+                        res = self.nixl_wrapper.get_xfer_telemetry(handle)
+                        self.xfer_stats.record_transfer(res)
+                        self.nixl_wrapper.release_xfer_handle(handle)'''
+new = '''                    if xfer_state == "DONE":
+                        # Telemetry is best-effort (capture_telemetry
+                        # defaults to False on the NIXL agent) — a
+                        # telemetry-retrieval failure must not invalidate a
+                        # transfer check_xfer_state already confirmed DONE.
+                        try:
+                            res = self.nixl_wrapper.get_xfer_telemetry(handle)
+                            self.xfer_stats.record_transfer(res)
+                        except Exception:
+                            pass
+                        self.nixl_wrapper.release_xfer_handle(handle)'''
+text = open(path).read()
+assert old in text, "nixl_connector.py: expected DONE-branch snippet not found — upstream vllm may have changed"
+open(path, "w").write(text.replace(old, new, 1))
+PYEOF
+    echo "  nixl_connector.py: NIXL_ERR_NO_TELEMETRY false-failure patch applied ✅"
+fi
+
 # ── numpy pin ─────────────────────────────────────────────────────────────────
 # System s339 may have numpy 2.x in ~/.local (binary-incompatible with torch 2.2.0+sn).
 # Install 1.26.4 from wheelhouse into the venv so it takes precedence.
