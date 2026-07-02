@@ -50,6 +50,9 @@ if [[ "${1:-}" == "--inner" ]]; then
         -e "VLLM_USE_DEEP_GEMM=0" \
         --shm-size=1g \
         -e "UCX_MODULE_DIR=/opt/ucx/lib/ucx" \
+        -e "UCX_TLS=rc,cuda_copy,cuda_ipc" \
+        -e "UCX_NET_DEVICES=bnxt_re0:1" \
+        -e "UCX_IB_ROCE_REACHABILITY_MODE=all" \
         -e "HF_HOME=$GPU_CACHE_ROOT/huggingface" \
         -e "VLLM_CACHE_ROOT=$GPU_CACHE_ROOT/vllm" \
         -e "TRITON_CACHE_DIR=$GPU_CACHE_ROOT/triton" \

@@ -96,6 +96,17 @@ elif [ -f "$NIXL_PATCH" ] && [ -n "$NIXL_PY" ]; then
     cd "$REPO_ROOT"
 fi
 
+# publisher.py: clamp kv_cache_usage-derived block count to >= 0.
+# scheduler_stats.kv_cache_usage can go transiently negative after a
+# KV-load-failure reschedule; dynamo's Rust publish() takes an unsigned int
+# and raises OverflowError on a negative value, which kills the whole
+# engine (EngineDeadError) on the very next metrics tick.
+PUBLISHER_PY=$(find "$VENV" -name "publisher.py" -path "*/dynamo/vllm/*" 2>/dev/null | head -1)
+if [ -n "$PUBLISHER_PY" ] && grep -q "^        active_decode_blocks = int(self.num_gpu_block \* scheduler_stats.kv_cache_usage)$" "$PUBLISHER_PY" 2>/dev/null; then
+    sed -i 's/^        active_decode_blocks = int(self.num_gpu_block \* scheduler_stats.kv_cache_usage)$/        active_decode_blocks = max(0, int(self.num_gpu_block * scheduler_stats.kv_cache_usage))/' "$PUBLISHER_PY"
+    echo "  publisher.py: negative kv_cache_usage clamp applied ✅"
+fi
+
 # ── numpy pin ─────────────────────────────────────────────────────────────────
 # System s339 may have numpy 2.x in ~/.local (binary-incompatible with torch 2.2.0+sn).
 # Install 1.26.4 from wheelhouse into the venv so it takes precedence.
