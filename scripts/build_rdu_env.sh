@@ -28,7 +28,6 @@
 #                                   transitive-dep wheels
 #   $REPO_ROOT/.venv_rdu/         — the complete, working RDU decode venv
 set -euo pipefail
-export PYTHONNOUSERSITE=1
 
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 source "$REPO_ROOT/config/versions.env"
@@ -191,6 +190,43 @@ PYEOF
     sed -i '/"csrc\/cpu\/mla_decode.cpp"/d' "$VLLM_SRC/cmake/cpu_extension.cmake" 2>/dev/null || true
     echo "    cmake/cpu_extension.cmake: mla_decode.cpp removed ✅"
 
+    # Patch 6: csrc/cpu/utils.hpp — at::cpu::L2_cache_size() doesn't exist in
+    # torch 2.2.0+sn (confirmed absent from its C++ headers entirely, not a
+    # version regression — this vllm release's csrc has just never actually
+    # been compiled against this specific torch before). Used only to pick a
+    # cache-blocking size for a CPU attention micro-optimization we don't
+    # need — real compute happens on RDU/GPU hardware, not vllm's own CPU
+    # kernels. Hardcode a reasonable constant (1MB) instead of calling it.
+    UTILS_HPP="$VLLM_SRC/csrc/cpu/utils.hpp"
+    if grep -q "const uint32_t l2_cache_size = at::cpu::L2_cache_size();" "$UTILS_HPP" 2>/dev/null; then
+        python3 - "$UTILS_HPP" <<'PYEOF'
+import sys
+path = sys.argv[1]
+old = '''inline int64_t get_available_l2_size() {
+  static int64_t size = []() {
+    const uint32_t l2_cache_size = at::cpu::L2_cache_size();
+    return l2_cache_size >> 1;  // use 50% of L2 cache
+  }();
+  return size;
+}'''
+new = '''inline int64_t get_available_l2_size() {
+  // at::cpu::L2_cache_size() is not present in torch 2.2.0+sn's C++ API
+  // (confirmed absent from its headers). Not performance-critical here —
+  // this only sizes a CPU-attention cache-blocking optimization, and real
+  // compute happens on RDU/GPU hardware. Hardcode a reasonable value
+  // (1MB, half of a common 2MB per-core L2 size) instead.
+  static int64_t size = 1048576 >> 1;
+  return size;
+}'''
+text = open(path).read()
+assert old in text, "utils.hpp: expected get_available_l2_size() body not found — upstream vllm may have changed"
+open(path, "w").write(text.replace(old, new, 1))
+print("    csrc/cpu/utils.hpp: get_available_l2_size() hardcoded (no at::cpu::L2_cache_size) ✅")
+PYEOF
+    else
+        echo "    csrc/cpu/utils.hpp: L2_cache_size call not found (already patched or upstream changed)"
+    fi
+
     # ── UCX + NIXL source ──────────────────────────────────────────────────────
     if [ ! -d "$SRC_DIR/ucx/.git" ]; then
         echo "  Cloning andychensn/ucx@$UCX_COMMIT..."
@@ -290,6 +326,91 @@ PYEOF
         echo "  ai-dynamo wheel ✅"
     else
         echo "  ai-dynamo wheel already present"
+    fi
+
+    # Every other unpinned wheel that build_venv()'s install_whl calls expect
+    # to already be in wheelhouse/ — vllm's own import-time deps plus the
+    # "extra transitive deps" discovered by exercising the real entrypoint
+    # import chain (see build_venv() for why each one is needed). None of
+    # these have a pinned version; --only-binary=:all: keeps them prebuilt
+    # wheels rather than sdists needing a compiler.
+    #
+    # NOTE 2026-07-03: this whole fetch step was missing entirely until a
+    # true from-scratch reproducibility test caught it — wheelhouse/ had
+    # accumulated all of these from ad-hoc, untracked `pip download`/`pip
+    # install` commands run directly during earlier debugging sessions,
+    # never wiped, so the gap was invisible until wheelhouse/ was deleted
+    # for real. If you add a new install_whl(...) call to build_venv(),
+    # add the matching package name here too, or it will only "work" for
+    # as long as your own wheelhouse/ happens to already have it cached.
+    for pkg in \
+        pybase64  blake3  depyf  lark  einops  cloudpickle  loguru \
+        diskcache  msgspec  ninja  cachetools  anyio  httpcore  httpx \
+        openai  compressed_tensors  openai_harmony  mcp  mistral_common \
+        docstring_parser  durationpy  email_validator  h11  fastar \
+        llguidance  lm_format_enforcer  sniffio  astor  dnspython \
+        pydantic_settings  pyjwt  python_multipart  sse_starlette \
+        starlette  typing_inspection  uvicorn  pydantic_extra_types \
+        tiktoken  ijson  partial_json_parser  watchfiles  anthropic \
+        fastapi  outlines_core  prometheus_fastapi_instrumentator \
+        python_json_logger  xgrammar  kubernetes \
+        model_hosting_container_standards  exceptiongroup  httpx_sse \
+        tqdm  pycountry  annotated_doc  interegular \
+        jmespath  python_dotenv  requests_oauthlib  websocket_client \
+        redis  oauthlib  asgiref  cffi  cryptography  google_auth \
+        googleapis_common_protos  grpcio  grpcio_reflection  httptools \
+        importlib_metadata  json_logic  opentelemetry_api \
+        opentelemetry_exporter_otlp  opentelemetry_sdk \
+        opentelemetry_semantic_conventions  protobuf  pyasn1 \
+        pyasn1_modules  pyprctl  rich_toolkit  rignore  shellingham \
+        typer  websockets  zipp  pydantic  typing_extensions \
+        ; do
+        if ! find "$WHEELHOUSE" -name "${pkg}-*.whl" 2>/dev/null | grep -q .; then
+            echo "  Downloading $pkg..."
+            python3.12 -m pip download "$pkg" --only-binary=:all: --no-deps \
+                --python-version 311 --platform manylinux_2_17_x86_64 --dest "$WHEELHOUSE" 2>&1 | tail -2
+        fi
+    done
+    echo "  extra transitive-dep wheels ✅"
+
+    # pydantic_core: NOT in the unpinned loop above on purpose. pydantic
+    # checks at import time that its installed pydantic_core is EXACTLY the
+    # version it was built against (SystemError if not) — independently
+    # fetching "whatever's latest" for both packages will eventually drift
+    # out of sync the moment either gets a new PyPI release (caught for
+    # real 2026-07-03: pydantic 2.13.4 required pydantic_core==2.46.4, but
+    # an independently-fetched "latest" pydantic_core was already 2.47.0).
+    # Derive the exact required version from the pydantic wheel's own
+    # metadata instead of guessing a version number that will go stale.
+    if ! find "$WHEELHOUSE" -name "pydantic_core-*.whl" 2>/dev/null | grep -q .; then
+        PYDANTIC_WHL=$(find "$WHEELHOUSE" -name "pydantic-*.whl" 2>/dev/null | head -1)
+        if [ -n "$PYDANTIC_WHL" ]; then
+            PYDANTIC_CORE_PIN=$(python3.12 -c "
+import zipfile, re, sys
+with zipfile.ZipFile('$PYDANTIC_WHL') as z:
+    meta = [n for n in z.namelist() if n.endswith('METADATA')][0]
+    text = z.read(meta).decode()
+m = re.search(r'^Requires-Dist: pydantic-core==([0-9.]+)', text, re.MULTILINE)
+print(m.group(1) if m else '')
+")
+            if [ -n "$PYDANTIC_CORE_PIN" ]; then
+                echo "  Downloading pydantic_core==$PYDANTIC_CORE_PIN (exact pin required by fetched pydantic)..."
+                python3.12 -m pip download "pydantic_core==$PYDANTIC_CORE_PIN" --only-binary=:all: --no-deps \
+                    --python-version 311 --platform manylinux_2_17_x86_64 --dest "$WHEELHOUSE" 2>&1 | tail -2
+            else
+                echo "  WARNING: could not determine pydantic_core pin from $PYDANTIC_WHL metadata — falling back to latest"
+                python3.12 -m pip download "pydantic_core" --only-binary=:all: --no-deps \
+                    --python-version 311 --platform manylinux_2_17_x86_64 --dest "$WHEELHOUSE" 2>&1 | tail -2
+            fi
+        fi
+    fi
+
+    # jiter: needed cp311-specific (build_venv() explicitly avoids the
+    # cp312 variant pip would otherwise resolve to on some platform args).
+    if ! find "$WHEELHOUSE" -name "jiter-*cp311*.whl" 2>/dev/null | grep -q .; then
+        echo "  Downloading jiter (cp311)..."
+        python3.12 -m pip download "jiter" --only-binary=:all: --no-deps \
+            --python-version 311 --platform manylinux_2_17_x86_64 --dest "$WHEELHOUSE" 2>&1 | tail -2
     fi
 
     # rdma-core devel headers — RDU nodes ship libibverbs/librdmacm runtime
@@ -470,6 +591,19 @@ build_vllm_cpu_wheel() {
     echo "=== Building vllm $VLLM_VERSION+cpu on $(hostname) $(date) ==="
     [ -d "$VLLM_SRC" ] || { echo "ERROR: $VLLM_SRC not found — run --fetch-only first"; exit 1; }
 
+    # Always start cmake configure fresh. vllm's setup.py leaves a persistent
+    # in-source-tree build/ dir (with a CMakeCache.txt) that survives across
+    # separate --build-only invocations, since $VLLM_SRC lives under the
+    # NFS-persisted rdu-build-src/, not a scratch /tmp dir. If an earlier
+    # attempt got past cmake configure (which resolves and caches an absolute
+    # path to ninja from build_ucx_nixl()'s throwaway $BUILD_TMP) and then
+    # failed later during actual compilation, a subsequent run's cmake
+    # reuses that now-deleted ninja path from the stale cache and fails with
+    # a confusing "No such file or directory" — unrelated to whatever the
+    # original failure was. Removing the whole build/ dir first guarantees
+    # every invocation reconfigures against the current job's own paths.
+    rm -rf "$VLLM_SRC/build"
+
     # Fix vllm pyproject.toml license field:
     # - "Apache 2.0" is not valid SPDX → setuptools 77+ rejects it
     # - pip 22.3.1 (on s339) requires object format {text=...} not a bare string
@@ -517,6 +651,18 @@ build_vllm_cpu_wheel() {
 
 build_venv() {
     echo "=== Building RDU venv on $(hostname) $(date) ==="
+
+    # Scoped here, not exported globally at the top of this script: the venv
+    # is created with --system-site-packages, so without this, `pip install`
+    # can see a same-named package already sitting in ~/.local and skip
+    # installing it into the venv — the package then vanishes at actual
+    # launch time, where rdu_decode.sh sets this same variable and user-site
+    # is no longer on sys.path (bit us for real with `annotated_doc`).
+    # Exporting it any earlier in this script breaks fetch_sources(): on the
+    # login node, `python3.12 -m pip` only has a user-site-installed pip
+    # (no system package), so PYTHONNOUSERSITE=1 there makes every
+    # `python3.12 -m pip download` fail with "No module named pip".
+    export PYTHONNOUSERSITE=1
 
     # Prefer the +cpu wheel (torch 2.2.x compat patches baked in) over the fallback.
     VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*+cpu-cp311*.whl" 2>/dev/null | head -1 || \
