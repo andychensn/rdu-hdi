@@ -314,7 +314,7 @@ python -c "import vllm; print(f'vllm: {vllm.__version__}')"
 python -c "import numpy; print(f'numpy: {numpy.__version__}')"
 LD_LIBRARY_PATH="$RDU_UCX_LIB:${LD_LIBRARY_PATH:-}" python -c "import nixl; print('nixl: OK')" || \
     echo "WARNING: nixl needs UCX libs at runtime (set LD_LIBRARY_PATH=$RDU_UCX_LIB)"
-python -c "import rdu_hardware; print('vllm-rdu: OK')" 2>/dev/null || echo "WARNING: rdu_hardware import failed (expected on non-RDU node)"
+python -c "import rdu_hardware; print('vllm-rdu: OK')" 2>/dev/null || echo "WARNING: rdu_hardware import failed here (BAR2/LD_PRELOAD env is set at launch time, not build time — the deeper rdu_hardware.worker check below is the real signal)"
 python -c "import av; print(f'av: {av.__version__}')" 2>/dev/null || echo "WARNING: av import failed — rdu_manifest.vlm_pipeline will fail to load"
 
 # `import vllm`/`import dynamo.vllm` alone do NOT exercise the full entrypoint

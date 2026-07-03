@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Build UCX 1.22 (no CUDA) and NIXL pathb wheel for the RDU decode side.
 #
-# The RDU node has no internet access, so this script runs in two phases:
+# This script runs in two phases:
+#
+# (Note 2026-07-03: empirically, sc3-s339 DOES have internet access — `curl
+# https://pypi.org`, `pip install`, and `git clone` all work fine from it.
+# The two-phase split below predates that finding and isn't a hard
+# requirement anymore, but it's a proven-safe pattern already in place —
+# kept as-is rather than churned for no functional benefit. Don't assume
+# "no internet" as a hard constraint elsewhere without checking first.)
 #
 # Phase 1 (login node — needs internet):
 #   bash scripts/build_rdu_ucx_nixl.sh --fetch-only
@@ -255,7 +262,7 @@ build_on_rdu_node() {
         )
         IB_COUNT=$(ls $UCX_INSTALL/lib/ucx/libuct_ib*.so 2>/dev/null | wc -l)
         echo "UCX IB transports: $IB_COUNT"
-        [ "$IB_COUNT" -eq 0 ] && echo "WARNING: No IB transports — RDMA/RoCE will not work. Install rdma-core-devel on the RDU node."
+        [ "$IB_COUNT" -eq 0 ] && echo "WARNING: No IB transports — RDMA/RoCE will not work. Run '$0 --fetch-only' first to fetch rdma-core headers (there's no package manager access on the RDU node to install rdma-core-devel directly)."
     fi
 
     # Step B: Build NIXL pathb wheel
