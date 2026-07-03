@@ -3,8 +3,14 @@
 # Run from login node (sc-vnc9) — no GPU required.
 #
 # Usage:
-#   bash scripts/build_docker_gpu.sh           # builds + pushes with default tag
-#   bash scripts/build_docker_gpu.sh --no-push # build only, skip push
+#   bash scripts/build_docker_gpu.sh             # builds + pushes with default tag
+#   bash scripts/build_docker_gpu.sh --no-push   # build only, skip push
+#   bash scripts/build_docker_gpu.sh --no-cache  # force a cache-free rebuild
+#                                                 # (use for reproducibility testing —
+#                                                 # this daemon is shared with other
+#                                                 # users, so we can't just `docker
+#                                                 # system prune`; --no-cache gets the
+#                                                 # same guarantee for just this build)
 #
 # Image is tagged: $REGISTRY/$IMAGE_NAME:v${VLLM_VERSION}-rdu-hdi.${PATCH}
 # where PATCH is an incrementing integer per rdu-hdi change above vllm.
@@ -18,11 +24,13 @@ source "$REPO_ROOT/config/cluster.env"
 REGISTRY=sc-artifacts2.sambanovasystems.com/sw-docker-scratch
 IMAGE_NAME=rdu-hdi-gpu-prefill
 PUSH=true
+NO_CACHE=false
 
 # Parse args
 for arg in "$@"; do
     case "$arg" in
         --no-push) PUSH=false ;;
+        --no-cache) NO_CACHE=true ;;
         *) echo "Unknown arg: $arg"; exit 1 ;;
     esac
 done
@@ -68,7 +76,13 @@ echo ""
 # Dockerfile.gpu's ARGs have no defaults — every pin must come from here
 # (config/versions.env), or the build fails loudly instead of silently
 # using a stale value baked into the Dockerfile.
+BUILD_FLAGS=()
+if [ "$NO_CACHE" = "true" ]; then
+    echo "    (--no-cache: forcing a cold rebuild, ignoring any cached layers)"
+    BUILD_FLAGS+=(--no-cache)
+fi
 sudo -g docker /usr/bin/docker-wrapper build \
+    "${BUILD_FLAGS[@]}" \
     --build-arg VLLM_VERSION="v$VLLM_VERSION" \
     --build-arg UCX_COMMIT="$UCX_COMMIT" \
     --build-arg UCX_BRANCH="$UCX_BRANCH" \
