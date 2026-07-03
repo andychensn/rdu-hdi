@@ -59,16 +59,21 @@ else
 fi
 
 echo "=== Building $FULL_IMAGE ==="
-echo "    vllm:    $VLLM_VERSION"
-echo "    UCX:     $UCX_COMMIT"
-echo "    NIXL:    $NIXL_COMMIT"
-echo "    Dynamo:  $DYNAMO_VERSION"
+echo "    vllm:        $VLLM_VERSION"
+echo "    UCX:         $UCX_BRANCH @ $UCX_COMMIT"
+echo "    NIXL:        $NIXL_BRANCH @ $NIXL_COMMIT"
+echo "    Dynamo:      $DYNAMO_VERSION"
 echo ""
 
+# Dockerfile.gpu's ARGs have no defaults — every pin must come from here
+# (config/versions.env), or the build fails loudly instead of silently
+# using a stale value baked into the Dockerfile.
 sudo -g docker /usr/bin/docker-wrapper build \
     --build-arg VLLM_VERSION="v$VLLM_VERSION" \
     --build-arg UCX_COMMIT="$UCX_COMMIT" \
+    --build-arg UCX_BRANCH="$UCX_BRANCH" \
     --build-arg NIXL_COMMIT="$NIXL_COMMIT" \
+    --build-arg NIXL_BRANCH="$NIXL_BRANCH" \
     --build-arg DYNAMO_VERSION="$DYNAMO_VERSION" \
     -t "$FULL_IMAGE" \
     -f "$REPO_ROOT/Dockerfile.gpu" \

@@ -2,9 +2,10 @@
 #
 # Layers on top of vllm/vllm-openai:${VLLM_VERSION} (stock image with torch,
 # vllm, flashinfer, deepgemm already installed):
-#   - UCX 1.22 (andychensn/ucx@sn/v1.22) — bnxt_re RoCE RDMA support
-#   - NIXL (andychensn/nixl@sn/rdu-working) — KV cache transfer library
-#   - producer/nixl_connector.py overlay — verbatim copy of hdi's proven
+#   - UCX (andychensn/ucx) — bnxt_re RoCE RDMA support; branch/commit pinned
+#     in config/versions.env, NOT hardcoded here (see ARGs below)
+#   - NIXL (andychensn/nixl) — KV cache transfer library; same pinning rule
+#   - patches/gpu/nixl_connector.py overlay — verbatim copy of hdi's proven
 #     gpu_vllm_fork producer file (REGISTER_CONSUMER_MSG handshake + more),
 #     not a reconstructed patch — see docs/local/PARITY_PLAN.md Workstream B
 #   - ai-dynamo — dynamo.vllm + dynamo.frontend Python modules (no [vllm] extra: that upgrades vllm to 0.20.x)
@@ -14,8 +15,16 @@
 #
 # Run (inside SLURM job on GPU node):
 #   sudo -g docker /usr/bin/cuda-docker-run-wrapper --net=host --rm IMAGE vllm serve ...
-
-ARG VLLM_VERSION=v0.16.0
+#
+# All ARGs below are intentionally declared with NO default value.
+# config/versions.env is the single source of truth for every pin here;
+# scripts/build_docker_gpu.sh sources it and passes every value via
+# --build-arg. A default here would silently drift from versions.env the
+# next time one of them changes and the other doesn't — better to fail
+# loudly (empty ref/tag) than build successfully against a stale pin.
+# Do not `docker build -f Dockerfile.gpu .` directly; always go through
+# scripts/build_docker_gpu.sh.
+ARG VLLM_VERSION
 
 # ── Stage 1: builder — compiles UCX and NIXL wheel ───────────────────────────
 # Uses the same base so CUDA toolkit version matches.
@@ -26,11 +35,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libibverbs-dev librdmacm-dev rdma-core \
     && CUDA_MAJ=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') \
     && apt-get install -y --no-install-recommends cuda-nvml-dev-${CUDA_MAJ} 2>/dev/null || true \
-    && rm -rf /var/lib/apt/lists/*.
+    && rm -rf /var/lib/apt/lists/*
 
 # Build UCX 1.22 with CUDA and bnxt_re verbs support
-ARG UCX_COMMIT=e153f2e470a9681ab253a4704682cdeff02015cb
-RUN git clone --depth=200 --branch sn/v1.22 \
+ARG UCX_COMMIT
+ARG UCX_BRANCH
+RUN git clone --depth=200 --branch ${UCX_BRANCH} \
         https://github.com/andychensn/ucx.git /tmp/ucx-src && \
     git -C /tmp/ucx-src checkout ${UCX_COMMIT} && \
     # Strip GDAKI (DOCA/mlx5 GPU-Direct-Async) — not needed, avoids build failures
@@ -60,9 +70,10 @@ RUN git clone --depth=200 --branch sn/v1.22 \
     echo "UCX IB transports: $(ls /opt/ucx/lib/ucx/libuct_ib*.so 2>/dev/null | wc -l)"
 
 # Build NIXL wheel with UCX and CUDA backends
-ARG NIXL_COMMIT=c2abc770e03b81d01e705fbc0593f0c2d1364935
+ARG NIXL_COMMIT
+ARG NIXL_BRANCH
 RUN pip install meson-python pybind11 patchelf pyyaml setuptools build wheel && \
-    git clone --depth=50 --branch sn/rdu-working \
+    git clone --depth=50 --branch ${NIXL_BRANCH} \
         https://github.com/andychensn/nixl.git /tmp/nixl-src && \
     git -C /tmp/nixl-src checkout ${NIXL_COMMIT} && \
     mkdir -p /tmp/nixl-wheels && \
@@ -94,7 +105,7 @@ RUN NIXL_WHL=$(ls /tmp/nixl-wheels/nixl_cu12-*.whl | head -1) && \
 # Install Dynamo Python modules (dynamo.vllm, dynamo.frontend)
 # Use base package WITHOUT [vllm] extra — the [vllm] extra upgrades vllm to 0.20.1
 # which breaks MiniMax-M2.7. The dynamo.vllm module is in the base ai-dynamo package.
-ARG DYNAMO_VERSION=1.2.1
+ARG DYNAMO_VERSION
 RUN pip install "ai-dynamo==${DYNAMO_VERSION}" "ai-dynamo-runtime==${DYNAMO_VERSION}"
 
 # Overlay hdi's exact producer nixl_connector.py (verbatim copy from
@@ -102,7 +113,7 @@ RUN pip install "ai-dynamo==${DYNAMO_VERSION}" "ai-dynamo-runtime==${DYNAMO_VERS
 # runs, including REGISTER_CONSUMER_MSG handshake support). Replaces the
 # earlier reconstructed patch, which was a different, unverified changeset.
 # See docs/local/PARITY_PLAN.md Workstream B.
-COPY producer/nixl_connector.py /tmp/nixl_connector.py
+COPY patches/gpu/nixl_connector.py /tmp/nixl_connector.py
 RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__))") && \
     NIXL_CONN=$(find "$VLLM_DIR" -path "*kv_connector/v1/nixl_connector.py" 2>/dev/null | head -1) && \
     echo "nixl_connector.py: $NIXL_CONN" && \

@@ -20,12 +20,12 @@ if [[ "${1:-}" == "--inner" ]]; then
     # Hardware paths — from cluster.env (BAR2/SambaFlow SDK, like CUDA for RDU)
     # These are already set by cluster.env; snrdu may also inject them from the environment.
 
-    # UCX/NIXL: repo-built only (scripts/build_rdu_ucx_nixl.sh). No fallback to
+    # UCX/NIXL: repo-built only (scripts/build_rdu_env.sh). No fallback to
     # an external SOFTWARE_BUILD tree — verified nothing in our stack (NIXL
     # wheel, our own UCX build, ai-dynamo-runtime, SambaFlow SDK bindings)
     # depends on it; keeping a silent fallback just hid a stale dependency.
     RDU_UCX="${RDU_UCX:-$REPO_ROOT/rdu-ucx-install}"
-    [ -d "$RDU_UCX/lib" ] || { echo "ERROR: $RDU_UCX/lib not found — run scripts/build_rdu_ucx_nixl.sh first"; exit 1; }
+    [ -d "$RDU_UCX/lib" ] || { echo "ERROR: $RDU_UCX/lib not found — run scripts/build_rdu_env.sh --build-only first"; exit 1; }
     _UCX_LIB="$RDU_UCX/lib"
     _UCX_MOD="$RDU_UCX/lib/ucx"
 
@@ -38,7 +38,7 @@ if [[ "${1:-}" == "--inner" ]]; then
     # DIFFERENT paths, not the same one. Resolve both dynamically rather than
     # hardcoding a layout guess.
     _NIXL_LIBS_DIR=$(find "$RDU_VENV/lib/python3.11/site-packages" -maxdepth 1 -iname "*.nixl*.mesonpy.libs" 2>/dev/null | head -1)
-    [ -n "$_NIXL_LIBS_DIR" ] || { echo "ERROR: nixl mesonpy libs dir not found under $RDU_VENV — is nixl installed? (build_rdu_venv.sh)"; exit 1; }
+    [ -n "$_NIXL_LIBS_DIR" ] || { echo "ERROR: nixl mesonpy libs dir not found under $RDU_VENV — is nixl installed? (build_rdu_env.sh)"; exit 1; }
     _NIXL_LIB="$_NIXL_LIBS_DIR"
     _NIXL_PLUGIN_DIR="$_NIXL_LIBS_DIR/plugins"
 
