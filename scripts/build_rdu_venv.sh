@@ -84,19 +84,13 @@ if grep -q "^def direct_register_custom_op" "$TORCH_UTILS" 2>/dev/null && \
     echo "  direct_register_custom_op: early-return guard added ✅"
 fi
 
-# Apply REGISTER_CONSUMER_MSG patch to nixl_connector.py post-install.
-# This patch adds chunk-overlap KV transfer support for P/D disaggregation.
-NIXL_PY=$(find "$VENV" -name "nixl_connector.py" -path "*/kv_connector*" 2>/dev/null | head -1)
-NIXL_PATCH="$REPO_ROOT/patches/vllm_nixl_connector.patch"
-if grep -q "REGISTER_CONSUMER_MSG" "$NIXL_PY" 2>/dev/null; then
-    echo "  REGISTER_CONSUMER_MSG already present ✅"
-elif [ -f "$NIXL_PATCH" ] && [ -n "$NIXL_PY" ]; then
-    # Apply patch relative to the venv site-packages
-    SITE_PKG=$(dirname "$(dirname "$(dirname "$NIXL_PY")")")
-    cd "$SITE_PKG" && patch -p1 < "$NIXL_PATCH" && echo "  vllm_nixl_connector.patch applied ✅" || \
-        echo "WARNING: nixl_connector patch failed — VLLM_PD_CHUNK_OVERLAP=1 may not work"
-    cd "$REPO_ROOT"
-fi
+# NOTE: a REGISTER_CONSUMER_MSG patch for chunk-overlap KV transfer
+# (VLLM_PD_CHUNK_OVERLAP=1) used to be applied here. Removed 2026-07-03 —
+# its patch file was already renamed to patches/vllm_nixl_connector.patch.retired
+# (silently making this whole step a no-op with no error, discovered while
+# fixing an unrelated patch-path bug below), and launch/rdu_decode.sh +
+# launch/gpu_prefill.sh both hardcode VLLM_PD_CHUNK_OVERLAP=0 — the feature
+# isn't used. See patches/vllm_nixl_connector.patch.retired if ever revived.
 
 # nixl_connector.py (stock vLLM, not vllm-rdu): _pop_done_transfers treats a
 # telemetry-retrieval failure as a transfer failure, even when
@@ -154,9 +148,9 @@ echo "=== vllm import-time deps ==="
 install_whl() {
     local pattern="$1"
     local whl
-    whl=$(find "$WHEELHOUSE" -name "$pattern" 2>/dev/null | head -1 || true)
+    whl=$(find "$WHEELHOUSE" -name "$pattern" 2>/dev/null | sort -V | tail -1 || true)
     if [ -n "$whl" ]; then
-        pip install -q --no-deps "$whl"
+        pip install -q --no-deps --force-reinstall --no-cache-dir "$whl"
         echo "  installed: $(basename "$whl")"
     else
         echo "  WARNING: no wheel matching $pattern in wheelhouse"
@@ -219,7 +213,7 @@ PROTOCOL_PATCH="$REPO_ROOT/patches/dynamo_multimodal_protocol.patch"
 if [ -n "$PROTOCOL_PY" ] && grep -q "^try:$" "$PROTOCOL_PY" 2>/dev/null && grep -q "MultiModalUUIDDict = dict" "$PROTOCOL_PY" 2>/dev/null; then
     echo "  protocol.py: MultiModalUUIDDict fallback already present ✅"
 elif [ -f "$PROTOCOL_PATCH" ] && [ -n "$PROTOCOL_PY" ]; then
-    SITE_PKG=$(dirname "$(dirname "$(dirname "$PROTOCOL_PY")")")
+    SITE_PKG="${PROTOCOL_PY%/site-packages/*}/site-packages"
     cd "$SITE_PKG" && patch -p1 < "$PROTOCOL_PATCH" && echo "  dynamo_multimodal_protocol.patch applied ✅" || \
         echo "WARNING: protocol.py patch failed — dynamo.vllm import will crash on this vllm version"
     cd "$REPO_ROOT"
@@ -261,6 +255,57 @@ pip install -q -e "$FAST_COE_SRC/server/vllm-rdu"
 # has no internet, not the login node running this fetch step.
 install_whl "av-*.whl"                # rdu_manifest.vlm_pipeline (fast-coe)
 
+# ── Extra transitive deps ──────────────────────────────────────────────────────
+# Discovered one at a time by actually exercising `python -m dynamo.vllm`'s
+# full entrypoint import chain (async engine, FastAPI, multimodal_utils,
+# fast-coe's rdu_hardware worker) on a truly from-scratch venv — none of
+# these surface from `import vllm`/`import dynamo.vllm` alone, and every one
+# of them, if missing, crashes the whole engine at startup, not just a
+# feature. Previously lived in a separate install_extra_deps.sh that was
+# easy to forget to run; folded in here so one script produces a working venv.
+echo "=== Extra transitive deps ==="
+for pkg in \
+    openai_harmony  docstring_parser  durationpy  email_validator \
+    h11  mcp  mistral_common  fastar  llguidance  pybase64 \
+    sniffio  astor  dnspython  pydantic_settings  pyjwt \
+    python_multipart  sse_starlette  starlette  typing_inspection \
+    uvicorn  pydantic_extra_types  tiktoken  ijson  partial_json_parser \
+    watchfiles  anthropic  fastapi  outlines_core \
+    prometheus_fastapi_instrumentator  python_json_logger \
+    xgrammar  kubernetes  model_hosting_container_standards \
+    exceptiongroup  httpx_sse  tqdm  lm_format_enforcer  pydantic_core \
+    pycountry  annotated_doc  interegular  jmespath  python_dotenv \
+    requests_oauthlib  websocket_client  redis  oauthlib \
+    asgiref  cffi  cryptography  google_auth  googleapis_common_protos \
+    grpcio  grpcio_reflection  httptools  importlib_metadata  json_logic \
+    opentelemetry_api  opentelemetry_exporter_otlp  opentelemetry_sdk \
+    opentelemetry_semantic_conventions  protobuf  pyasn1  pyasn1_modules \
+    pyprctl  rich_toolkit  rignore  shellingham  typer  websockets  zipp \
+    ; do
+    install_whl "${pkg}-*.whl"
+done
+
+# jiter: wheelhouse has both cp311 and cp312 variants — this venv is cp311.
+# install_whl's `sort -V | tail -1` would pick cp312 (name-sorts after
+# cp311), which pip then rejects as "not a supported wheel on this platform".
+JITER_WHL=$(find "$WHEELHOUSE" -name "jiter-*cp311*.whl" 2>/dev/null | head -1 || true)
+if [ -n "$JITER_WHL" ]; then
+    pip install -q --no-deps --force-reinstall --no-cache-dir "$JITER_WHL"
+    echo "  installed: $(basename "$JITER_WHL")"
+else
+    echo "  WARNING: no cp311 jiter wheel in wheelhouse"
+fi
+
+# pydantic/typing_extensions: upgrade over whatever version transformers or
+# another --no-deps install pulled in, to satisfy fastapi/mcp/ai-dynamo's
+# stricter version floors.
+install_whl "pydantic-*.whl"
+install_whl "typing_extensions-*.whl"
+
+echo ""
+echo "=== pip check (informational — version-pin mismatches here are expected) ==="
+pip check 2>&1 | grep -v "grpcio-reflection\|opencv\|protobuf\|msgpack\|prometheus-client\|aiohttp" | head -20 || true
+
 # ── Validate ──────────────────────────────────────────────────────────────────
 echo ""
 echo "=== Validating ==="
@@ -271,6 +316,19 @@ LD_LIBRARY_PATH="$RDU_UCX_LIB:${LD_LIBRARY_PATH:-}" python -c "import nixl; prin
     echo "WARNING: nixl needs UCX libs at runtime (set LD_LIBRARY_PATH=$RDU_UCX_LIB)"
 python -c "import rdu_hardware; print('vllm-rdu: OK')" 2>/dev/null || echo "WARNING: rdu_hardware import failed (expected on non-RDU node)"
 python -c "import av; print(f'av: {av.__version__}')" 2>/dev/null || echo "WARNING: av import failed — rdu_manifest.vlm_pipeline will fail to load"
+
+# `import vllm`/`import dynamo.vllm` alone do NOT exercise the full entrypoint
+# import graph (async engine, FastAPI, multimodal_utils) that `python -m
+# dynamo.vllm` (what launch/rdu_decode.sh actually runs) does — a missing
+# transitive dep here crashes the real launch ~12 minutes into BAR2 init,
+# not at build time, unless checked explicitly like this.
+python -c "from dynamo.vllm.main import main; print('dynamo.vllm.main: OK')"
+
+# Same idea for fast-coe's real RDU worker module chain (rdu_hardware.worker
+# -> model_runner -> server.rdu_manifest.*) — this is where most of the
+# "extra transitive deps" above were actually discovered missing.
+PYTHONPATH="$FAST_COE_SRC:$FAST_COE_SRC/server/inference-router/client-py:$FAST_COE_SRC/server/block_hash:${PYTHONPATH:-}" \
+    python -c "from rdu_hardware.worker import *; print('rdu_hardware.worker: OK')" 2>&1 | tail -5
 
 echo ""
 echo "=== RDU venv build COMPLETE $(date) ==="
