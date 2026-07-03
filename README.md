@@ -110,6 +110,7 @@ bash launch/gpu_prefill.sh
 source config/cluster.env && bash launch/rdu_decode.sh
 
 # 4. Warmup (first request ~47s, cold NIXL init)
+source config/model.env
 curl -s http://localhost:18000/v1/completions \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"$SERVED_MODEL_NAME\",\"prompt\":\"hello\",\"max_tokens\":1}"
