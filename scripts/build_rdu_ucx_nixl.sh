@@ -94,6 +94,19 @@ fetch_sources() {
         echo "  regex wheel already present"
     fi
 
+    # av (PyAV) — needed by fast-coe's rdu_manifest.vlm_pipeline (imported
+    # unconditionally at module load, even for text-only models). C-extension
+    # package (bundles ffmpeg libs), so must be a prebuilt wheel, not vendored
+    # source. Not in the SambaNova system Python.
+    if ! find "$WHEEL_OUT" -name "av-*.whl" 2>/dev/null | grep -q .; then
+        echo "  Downloading av..."
+        python3.12 -m pip download "av==12.3.0" --only-binary=:all: --no-deps \
+            --python-version 311 --platform manylinux_2_17_x86_64 --dest "$WHEEL_OUT" 2>&1 | tail -2
+        echo "  av wheel ✅"
+    else
+        echo "  av wheel already present"
+    fi
+
     # numpy pinned wheel — system s339 may have newer numpy (2.x) compiled against
     # incompatible ABI; we install 1.26.4 into the venv to override it.
     if ! find "$WHEEL_OUT" -name "numpy-${RDU_NUMPY_VERSION}-cp311-*.whl" 2>/dev/null | grep -q .; then

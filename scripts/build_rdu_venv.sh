@@ -223,21 +223,11 @@ pip install -q -e "$FAST_COE_SRC/server/vllm-rdu"
 
 # ── PyAV (fast-coe's rdu_manifest.vlm_pipeline imports it unconditionally,
 # even for text-only models — not needed by the old andychensn/vllm-rdu
-# package, so not previously in this venv). Not in wheelhouse as an
-# installable wheel; hdi's venv_decode has a working copy built for the
-# identical base Python (/opt/sambanova/bin/python3.11, --system-site-packages)
-# — vendor it directly rather than requiring internet access on the RDU node.
-if ! python -c "import av" 2>/dev/null; then
-    echo "=== av (PyAV) — vendored from hdi's venv_decode ==="
-    HDI_SITE_PACKAGES=/import/snvm-sc-scratch1/andyc/hdi/fast-coe/server/vllm-ext/venv_decode/lib/python3.11/site-packages
-    if [ -d "$HDI_SITE_PACKAGES/av" ]; then
-        cp -r "$HDI_SITE_PACKAGES/av" "$HDI_SITE_PACKAGES"/av-*.dist-info "$HDI_SITE_PACKAGES/av.libs" \
-            "$VENV/lib/python3.11/site-packages/"
-        echo "  av vendored ✅"
-    else
-        echo "WARNING: hdi's venv_decode av package not found at $HDI_SITE_PACKAGES — rdu_manifest imports will fail"
-    fi
-fi
+# package, so not previously in this venv). Prebuilt manylinux wheel fetched
+# from PyPI on the login node (which has internet) into wheelhouse/, same
+# pattern as every other install_whl dependency above — the RDU node itself
+# has no internet, not the login node running this fetch step.
+install_whl "av-*.whl"                # rdu_manifest.vlm_pipeline (fast-coe)
 
 # ── Validate ──────────────────────────────────────────────────────────────────
 echo ""
