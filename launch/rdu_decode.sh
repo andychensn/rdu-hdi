@@ -47,24 +47,12 @@ if [[ "${1:-}" == "--inner" ]]; then
         echo "WARNING: MODEL_CONFIG=$RDU_CONFIG not found — running without model config"
         RDU_CONFIG=""
     }
-
-    # Generate a runtime YAML that merges the static model config with the
-    # environment-specific pef_path and checkpoint_path (required by RduConfig).
-    # RduConfig.pef_path must match the PEF passed to snrdu; checkpoint_path = model.
-    if [ -n "$RDU_CONFIG" ]; then
-        RDU_CONFIG_RUNTIME="${RDU_CACHE}/rdu_config_runtime.yaml"
-        mkdir -p "$RDU_CACHE"
-        {
-            cat "$RDU_CONFIG"
-            echo "pef_path: $PEF"
-            # RDU_CKPT: packed FP8 checkpoint on s339's local /scratch.
-            # Must NOT use MODEL (HF BF16 checkpoint) — the PEF expects the
-            # pre-packed format; mixing causes FP8→BF16 dtype conversion failures.
-            echo "checkpoint_path: ${RDU_CKPT:-$MODEL}"
-        } > "$RDU_CONFIG_RUNTIME"
-        RDU_CONFIG="$RDU_CONFIG_RUNTIME"
-        echo "  rdu_config: $RDU_CONFIG_RUNTIME (pef_path + checkpoint_path added)"
-    fi
+    # fast-coe's config schema (server/rdu_manifest/model_registry.py's
+    # Expert.from_config) embeds pef/checkpoint paths directly in the YAML
+    # (pefs:/checkpoints: maps referenced by name from experts:), unlike the
+    # old (retired) flat RduConfig schema — no runtime YAML generation needed,
+    # pass config/minimax_m2.yaml straight through.
+    [ -n "$RDU_CONFIG" ] && echo "  rdu_config: $RDU_CONFIG (fast-coe schema, used as-is)"
 
     PYTHONNOUSERSITE=1 \
     ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \
@@ -73,8 +61,9 @@ if [[ "${1:-}" == "--inner" ]]; then
     HF_HUB_OFFLINE=1 \
     VLLM_NIXL_SIDE_CHANNEL_HOST="$RDU_ROCE_IP_LOCAL" \
     VLLM_NIXL_SIDE_CHANNEL_PORT=5600 \
-    VLLM_PD_CHUNK_OVERLAP=1 \
-    VLLM_PD_PRODUCER_CHUNK_OVERLAP=1 \
+    RDU_ENABLED=1 \
+    VLLM_PD_CHUNK_OVERLAP=0 \
+    VLLM_PD_PRODUCER_CHUNK_OVERLAP=0 \
     VLLM_PD_PRODUCER_HOST="$GPU_ROCE_IP" \
     VLLM_PD_PRODUCER_PORT=5600 \
     SN_REMOTE_KV_MEMTYPE=VRAM \
@@ -82,13 +71,19 @@ if [[ "${1:-}" == "--inner" ]]; then
     SN_MULTI_AGENT_NICS=bnxt_re0,bnxt_re2,bnxt_re4,bnxt_re6 \
     VLLM_CPU_KVCACHE_SPACE=200 \
     VLLM_CPU_OMP_THREADS_BIND=nobind \
-    UCX_TLS=rc,tcp \
+    UCX_TLS=rc \
     UCX_NET_DEVICES=bnxt_re0:1,bnxt_re2:1,bnxt_re4:1,bnxt_re6:1 \
     UCX_MAX_RNDV_RAILS=4 \
     UCX_MAX_RMA_RAILS=1 \
     UCX_MULTI_LANE_MAX_RATIO=100 \
     UCX_IB_PREFER_NEAREST_DEVICE=n \
     UCX_IB_ROCE_REACHABILITY_MODE=all \
+    UCX_RC_VERBS_MAX_RD_ATOMIC=16 \
+    UCX_RC_VERBS_TIMEOUT=20000us \
+    UCX_RC_VERBS_TX_QUEUE_LEN=256 \
+    UCX_RC_VERBS_RX_QUEUE_LEN=4095 \
+    UCX_RC_VERBS_RETRY_COUNT=7 \
+    UCX_RC_VERBS_RNR_RETRY_COUNT=7 \
     UCX_RCACHE_MAX_UNRELEASED=1024 \
     UCX_LOG_LEVEL=WARN \
     UCX_MODULE_DIR="$_UCX_MOD" \
@@ -101,7 +96,6 @@ if [[ "${1:-}" == "--inner" ]]; then
     SF_RNT_DMA_POLL_BUSY_WAIT=1 \
     SF_RNT_NUMA_BIND=2 \
     SF_RNT_LOG_LEVEL=ERR \
-    VLLM_RDU_PLUGIN_DEBUG=1 \
     AL_EXEC_LOOPING=1 \
     GRAPH_TIMEOUT_USEC=120000000 \
     TRITON_CACHE_DIR="$RDU_CACHE/triton" \
@@ -109,7 +103,7 @@ if [[ "${1:-}" == "--inner" ]]; then
     HF_HOME="$RDU_CACHE/huggingface" \
     VLLM_CONFIG_ROOT="$RDU_CACHE/vllm_config" \
     TRANSFORMERS_CACHE="$RDU_CACHE/huggingface" \
-    PYTHONPATH="$BAR2_INSTALL/python:${PYTHONPATH:-}" \
+    PYTHONPATH="$BAR2_INSTALL/python:$REPO_ROOT/fast-coe:$REPO_ROOT/fast-coe/server/inference-router/client-py:$REPO_ROOT/fast-coe/server/block_hash:${PYTHONPATH:-}" \
     LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$SOFTWARE_BUILD/etcd-cpp-api-install/lib:$SOFTWARE_BUILD/gflags-install/lib:$BAR2_RUNTIME_LIBS:$BAR2_INSTALL/lib:${LD_LIBRARY_PATH:-}" \
     LD_PRELOAD="$BAR2_PRELOAD/libc_samba_runtime.so:$BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
         exec python -m dynamo.vllm \
@@ -121,6 +115,7 @@ if [[ "${1:-}" == "--inner" ]]; then
             --tensor-parallel-size 1 \
             --no-enable-prefix-caching \
             --max-model-len "$MAX_MODEL_LEN" \
+            --reasoning-parser minimax_m2_append_think \
             --compilation-config '{"mode": 0}' \
             ${RDU_CONFIG:+--additional-config "{\"rdu_config\": \"$RDU_CONFIG\"}"} \
             --trust-remote-code \

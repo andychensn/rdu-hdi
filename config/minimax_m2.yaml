@@ -1,33 +1,42 @@
 # RDU configuration for MiniMax-M2.7 FP8 on SN40L.
-# Schema: RduConfig from vllm-rdu/rdu_executor/config.py
-# DimSpec format: [min, max, step] (list) or int (static)
-# pef_path and checkpoint_path are added dynamically in rdu_decode.sh --inner.
+# Schema: fast-coe's rdu_manifest.model_registry.Expert.from_config (server/rdu_manifest).
+# Copied verbatim (structure + values) from hdi's proven
+# fast-coe/server/vllm-ext/configs/minimax_m2.yaml (commit c3f335377) — same PEF,
+# same checkpoint, same dynamic-dims config. Unlike the old (retired) flat
+# RduConfig schema, pef_path/checkpoint_path are embedded here by name, not
+# injected at runtime by rdu_decode.sh.
 
-task: autoregressive
+pefs:
+  MINI_PEF_FP8: "/import/ml-sc-scratch4/jayr/minimax_m2__full_layers_tp16_ssss_cg_ss_max_ss_tg_parallel_sdk_fp8_per_tensor/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608.pef"
 
-# Multi-token prediction: MiniMax-M2 PEF generates 20 tokens per coe_model.run()
-num_tokens_at_a_time: 20
+checkpoints:
+  MINI_CKPT_FP8: "/scratch/MiniMax-M2.7-FP8-RDU-packed"
 
-# Batch size: static 2 (PEF compiled with BS2 in name: CoE_ckpt_sharing_BS2_...)
-# Static int, not a range — the PEF has fixed batch size
-bs: 2
-
-# Dynamic tensor dims (PEF compiled with variable-size dims)
-dynamic_tensor: true
-
-# Dim names from the PEF: TP16_ssSS_CG_SS_MAX_SS_TG
-kv_dim_name: SS_MAX
-prefill_dim_name: SS_CG
-decode_dim_name: SS_TG
-
-# KV dim: set at load time (not runtime) — [min, max, step]
-kv_set_at: load
-kv: [4096, 196608, 4096]
-
-# Prefill dim: set at runtime per-request
-prefill_set_at: runtime
-prefill: [4096, 196608, 4096]
-
-# Decode dim: set at runtime per-request
-decode_set_at: runtime
-decode: [4096, 196608, 4096]
+experts:
+  MiniMax-M2.7:
+    -
+      batch_size: 2
+      pef: MINI_PEF_FP8
+      checkpoint: MINI_CKPT_FP8
+      num_tokens_at_a_time: 20
+      dynamic_dims:
+        enabled: true
+        prefill_seq:
+          name: SS_CG
+          min: 4096
+          max: 196608
+          step: 4096
+          set_at: runtime
+        decode_seq:
+          name: SS_TG
+          min: 4096
+          max: 196608
+          step: 4096
+          set_at: runtime
+        kv_seq:
+          name: SS_MAX
+          min: 4096
+          max: 196608
+          default: 196608
+          step: 4096
+          set_at: load

@@ -7,8 +7,11 @@ rdu-ucx-install/
 .gpu_cache/
 .rdu_cache/
 .etcd_data/
+.etcd_data2/
 build/
 *.log
+# snrdu auto-generated batch-script artifacts (job-name-based, no fixed prefix)
+bash_[0-9]*
 
 # Python
 __pycache__/
@@ -23,7 +26,8 @@ wheelhouse/
 benchmark_results/
 
 # Runtime-only repos — cloned at setup time (see README.md)
-vllm-rdu/
+vllm-rdu.retired-andychensn-fork/
+fast-coe/
 InferenceX/
 vendor/bin/
 rdu-build-src/

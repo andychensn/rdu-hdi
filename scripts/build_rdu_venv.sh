@@ -29,7 +29,7 @@ VLLM_CPU_WHL=$(find "$WHEELHOUSE" -name "vllm-*+cpu-cp311*.whl" 2>/dev/null | he
 NIXL_WHL=$(find "$WHEELHOUSE" -name "nixl_cu12*cp311*.whl" 2>/dev/null | head -1 || true)
 DYNAMO_RUNTIME_WHL=$(find "$WHEELHOUSE" -name "ai_dynamo_runtime-*.whl" 2>/dev/null | head -1 || true)
 DYNAMO_WHL=$(find "$WHEELHOUSE" -name "ai_dynamo-*.whl" 2>/dev/null | head -1 || true)
-VLLM_RDU_SRC=$REPO_ROOT/vllm-rdu
+FAST_COE_SRC=$REPO_ROOT/fast-coe
 
 echo "=== rdu-hdi RDU venv build on $(hostname) $(date) ==="
 echo "    Python: $($PY --version)"
@@ -216,10 +216,28 @@ done
 echo "=== nixl ==="
 pip install -q "$NIXL_WHL"
 
-# ── vllm-rdu plugin ───────────────────────────────────────────────────────────
-echo "=== vllm-rdu (local editable install) ==="
-[ -d "$VLLM_RDU_SRC" ] || { echo "ERROR: $VLLM_RDU_SRC not found — run: gh repo clone andychensn/vllm-rdu $VLLM_RDU_SRC"; exit 1; }
-pip install -q -e "$VLLM_RDU_SRC"
+# ── vllm-rdu plugin (fast-coe's, pinned — hdi's exact proven connector/engine) ─
+echo "=== vllm-rdu (fast-coe @ $FAST_COE_COMMIT, editable install) ==="
+[ -d "$FAST_COE_SRC/server/vllm-rdu" ] || { echo "ERROR: $FAST_COE_SRC/server/vllm-rdu not found — run: bash scripts/fetch_fast_coe.sh"; exit 1; }
+pip install -q -e "$FAST_COE_SRC/server/vllm-rdu"
+
+# ── PyAV (fast-coe's rdu_manifest.vlm_pipeline imports it unconditionally,
+# even for text-only models — not needed by the old andychensn/vllm-rdu
+# package, so not previously in this venv). Not in wheelhouse as an
+# installable wheel; hdi's venv_decode has a working copy built for the
+# identical base Python (/opt/sambanova/bin/python3.11, --system-site-packages)
+# — vendor it directly rather than requiring internet access on the RDU node.
+if ! python -c "import av" 2>/dev/null; then
+    echo "=== av (PyAV) — vendored from hdi's venv_decode ==="
+    HDI_SITE_PACKAGES=/import/snvm-sc-scratch1/andyc/hdi/fast-coe/server/vllm-ext/venv_decode/lib/python3.11/site-packages
+    if [ -d "$HDI_SITE_PACKAGES/av" ]; then
+        cp -r "$HDI_SITE_PACKAGES/av" "$HDI_SITE_PACKAGES"/av-*.dist-info "$HDI_SITE_PACKAGES/av.libs" \
+            "$VENV/lib/python3.11/site-packages/"
+        echo "  av vendored ✅"
+    else
+        echo "WARNING: hdi's venv_decode av package not found at $HDI_SITE_PACKAGES — rdu_manifest imports will fail"
+    fi
+fi
 
 # ── Validate ──────────────────────────────────────────────────────────────────
 echo ""
@@ -230,6 +248,7 @@ python -c "import numpy; print(f'numpy: {numpy.__version__}')"
 LD_LIBRARY_PATH="$RDU_UCX_LIB:${LD_LIBRARY_PATH:-}" python -c "import nixl; print('nixl: OK')" || \
     echo "WARNING: nixl needs UCX libs at runtime (set LD_LIBRARY_PATH=$RDU_UCX_LIB)"
 python -c "import rdu_hardware; print('vllm-rdu: OK')" 2>/dev/null || echo "WARNING: rdu_hardware import failed (expected on non-RDU node)"
+python -c "import av; print(f'av: {av.__version__}')" 2>/dev/null || echo "WARNING: av import failed — rdu_manifest.vlm_pipeline will fail to load"
 
 echo ""
 echo "=== RDU venv build COMPLETE $(date) ==="

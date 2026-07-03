@@ -24,8 +24,12 @@ source "$REPO_ROOT/config/model.env"
 
 # ── Defaults ─────────────────────────────────────────────────────────────────
 ENDPOINT="http://$CONTROL_PLANE_IP:$VLLM_PORT"
+# Checkpoint path (model.env's MODEL) doubles as the tokenizer path — must be
+# captured before MODEL is reassigned to the served name below, or the
+# tokenizer arg silently becomes the served name (not a real HF repo id /
+# local path), which fails to load.
+TOKENIZER="${MODEL_PATH:-${MODEL:-}}"
 MODEL="${SERVED_MODEL_NAME:-}"                 # from model.env
-TOKENIZER="${MODEL_PATH:-${MODEL:-}}"          # checkpoint path doubles as tokenizer path
 INPUT_LEN=1000
 OUTPUT_LEN=1000
 CONCURRENCY=1
