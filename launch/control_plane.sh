@@ -30,6 +30,11 @@ if [ ! -x "$CP_VENV/bin/python" ]; then
     # Install runtime dependencies
     "$CP_VENV/bin/pip" install -q pydantic fastapi uvicorn aiohttp msgpack pyzmq \
         uvloop sortedcontainers cbor2 diskcache
+    # scripts/benchmark.sh reuses this venv to run InferenceX's
+    # benchmark_serving.py (its comment says "has transformers/tokenizers" —
+    # make that actually true here, rather than relying on it having been
+    # installed by hand into a venv that never gets wiped).
+    "$CP_VENV/bin/pip" install -q numpy transformers tqdm
     echo "  Control plane venv ready"
 fi
 
