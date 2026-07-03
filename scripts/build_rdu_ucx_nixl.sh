@@ -137,6 +137,46 @@ fetch_sources() {
     else
         echo "  ai-dynamo wheel already present"
     fi
+
+    # rdma-core devel headers — RDU nodes ship libibverbs/librdmacm runtime
+    # .so.1 (confirmed matching this exact version via SONAME 1.14.48.0 /
+    # 1.3.48.0) but not the -devel headers, and we can't install system
+    # packages there. Only public headers are needed to compile UCX's verbs
+    # transport against (internal/provider headers are not required by
+    # external consumers of the library). Fetched here instead of searched
+    # for on the RDU node — searching the whole /import NFS tree for
+    # verbs.h took well over 90s just for two subdirectories in testing
+    # and was the actual root cause of hours-long "hangs" during --build-only.
+    RDMA_HDRS="$SRC_DIR/rdma-core-headers"
+    if [ ! -f "$RDMA_HDRS/infiniband/verbs.h" ]; then
+        echo "  Downloading rdma-core $RDMA_CORE_VERSION headers..."
+        RDMA_TGZ="$SRC_DIR/rdma-core-${RDMA_CORE_VERSION}.tar.gz"
+        curl -sL -o "$RDMA_TGZ" "$RDMA_CORE_URL"
+        echo "$RDMA_CORE_SHA256  $RDMA_TGZ" | sha256sum -c - || { echo "ERROR: rdma-core tarball checksum mismatch"; exit 1; }
+        mkdir -p "$RDMA_HDRS/infiniband" "$RDMA_HDRS/rdma"
+        tar xzf "$RDMA_TGZ" --strip-components=2 -C "$RDMA_HDRS/infiniband" \
+            "rdma-core-${RDMA_CORE_VERSION}/libibverbs/arch.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/libibverbs/opcode.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/libibverbs/sa-kern-abi.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/libibverbs/sa.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/libibverbs/verbs.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/libibverbs/verbs_api.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/libibverbs/tm_types.h"
+        tar xzf "$RDMA_TGZ" --strip-components=2 -C "$RDMA_HDRS/infiniband" \
+            "rdma-core-${RDMA_CORE_VERSION}/librdmacm/acm.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/librdmacm/ib.h"
+        tar xzf "$RDMA_TGZ" --strip-components=3 -C "$RDMA_HDRS/infiniband" \
+            "rdma-core-${RDMA_CORE_VERSION}/kernel-headers/rdma/ib_user_ioctl_verbs.h"
+        tar xzf "$RDMA_TGZ" --strip-components=2 -C "$RDMA_HDRS/rdma" \
+            "rdma-core-${RDMA_CORE_VERSION}/librdmacm/rdma_cma.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/librdmacm/rdma_cma_abi.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/librdmacm/rdma_verbs.h" \
+            "rdma-core-${RDMA_CORE_VERSION}/librdmacm/rsocket.h"
+        rm -f "$RDMA_TGZ"
+        echo "  rdma-core headers ✅"
+    else
+        echo "  rdma-core headers already present"
+    fi
 }
 
 # ── Phase 2: Build on RDU node (uses NFS clone, no internet needed) ──────────
@@ -173,14 +213,17 @@ build_on_rdu_node() {
         mkdir -p "$VERBS_TMP"
         VERBS_EXTRA_FLAGS=""
         if [ ! -f /usr/include/infiniband/verbs.h ]; then
-            # Try to find headers from an NFS rdma-core-devel install or guoyaof's build
-            RDMA_HEADERS=$(find /import -name "verbs.h" -path "*/infiniband/*" 2>/dev/null | head -1)
-            if [ -n "$RDMA_HEADERS" ]; then
-                RDMA_INC=$(dirname "$(dirname "$RDMA_HEADERS")")
-                echo "  Using rdma headers from $RDMA_INC"
-                VERBS_EXTRA_FLAGS="CPPFLAGS=-I$RDMA_INC"
+            # Headers pre-fetched by --fetch-only (see fetch_sources) — NOT
+            # searched for here. A blind `find /import -name verbs.h` over
+            # the whole multi-TB NFS scratch tree was measured taking well
+            # over 90s for just two subdirectories and was the actual root
+            # cause of hours-long apparent "hangs" in this build step.
+            RDMA_HDRS="$SRC_DIR/rdma-core-headers"
+            if [ -f "$RDMA_HDRS/infiniband/verbs.h" ]; then
+                echo "  Using rdma-core headers from $RDMA_HDRS"
+                VERBS_EXTRA_FLAGS="CPPFLAGS=-I$RDMA_HDRS"
             else
-                echo "  WARNING: infiniband/verbs.h not found — IB transport will be disabled"
+                echo "  WARNING: $RDMA_HDRS/infiniband/verbs.h not found (run --fetch-only first) — IB transport will be disabled"
             fi
         fi
         # Create .so symlink if only .so.1 exists (needed by configure's -libverbs link test)
@@ -192,9 +235,14 @@ build_on_rdu_node() {
         [ -n "$(ls $VERBS_TMP/*.so 2>/dev/null)" ] && \
             VERBS_EXTRA_FLAGS="${VERBS_EXTRA_FLAGS} LDFLAGS=-L$VERBS_TMP"
 
+        # Unbuffered, timestamped output — a plain `| tail -N` here fully
+        # buffers all output until each step's EOF, so SLURM logs showed zero
+        # progress for the entire step no matter how long it took (measured:
+        # autoreconf ~12s, configure ~11s, full `make -j8 install` well under
+        # 2 minutes — none of these are actually slow; only their output was hidden).
         ( cd "$UCX_SRC"
-          autoreconf -fiv 2>&1 | tail -3
-          ./configure \
+          stdbuf -oL -eL autoreconf -fiv 2>&1 | stdbuf -oL awk '{ print strftime("[%H:%M:%S]"), $0; fflush(); }'
+          stdbuf -oL -eL ./configure \
               --prefix="$UCX_INSTALL" \
               --enable-shared --disable-static --enable-mt \
               --without-cuda \
@@ -202,8 +250,8 @@ build_on_rdu_node() {
               --without-gdrcopy --without-valgrind \
               --without-knem --without-efa --without-mpi \
               --disable-doxygen-doc --enable-optimizations \
-              MPICC= $VERBS_EXTRA_FLAGS 2>&1 | tail -5
-          make -j"$NPROC" install 2>&1 | tail -3
+              MPICC= $VERBS_EXTRA_FLAGS 2>&1 | stdbuf -oL awk '{ print strftime("[%H:%M:%S]"), $0; fflush(); }'
+          stdbuf -oL -eL make -j"$NPROC" install 2>&1 | stdbuf -oL awk '{ print strftime("[%H:%M:%S]"), $0; fflush(); }'
         )
         IB_COUNT=$(ls $UCX_INSTALL/lib/ucx/libuct_ib*.so 2>/dev/null | wc -l)
         echo "UCX IB transports: $IB_COUNT"

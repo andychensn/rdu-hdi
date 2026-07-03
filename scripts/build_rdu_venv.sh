@@ -9,7 +9,9 @@
 #      snrdu run ... -- bash scripts/build_vllm_cpu_wheel.sh --build-only  # build +cpu wheel
 #   2. bash scripts/build_rdu_ucx_nixl.sh --fetch-only     # fetch UCX/NIXL/deps
 #      snrdu run ... -- bash scripts/build_rdu_ucx_nixl.sh --build-only    # build UCX+NIXL
-#   3. snrdu run ... -- bash scripts/build_rdu_venv.sh     # this script
+#   3. bash scripts/fetch_fast_coe.sh                      # clone fast-coe, pinned by commit
+#      (no build step — pure Python, installed editable below)
+#   4. snrdu run ... -- bash scripts/build_rdu_venv.sh     # this script
 set -euo pipefail
 export PYTHONNOUSERSITE=1
 
@@ -94,17 +96,6 @@ elif [ -f "$NIXL_PATCH" ] && [ -n "$NIXL_PY" ]; then
     cd "$SITE_PKG" && patch -p1 < "$NIXL_PATCH" && echo "  vllm_nixl_connector.patch applied ✅" || \
         echo "WARNING: nixl_connector patch failed — VLLM_PD_CHUNK_OVERLAP=1 may not work"
     cd "$REPO_ROOT"
-fi
-
-# publisher.py: clamp kv_cache_usage-derived block count to >= 0.
-# scheduler_stats.kv_cache_usage can go transiently negative after a
-# KV-load-failure reschedule; dynamo's Rust publish() takes an unsigned int
-# and raises OverflowError on a negative value, which kills the whole
-# engine (EngineDeadError) on the very next metrics tick.
-PUBLISHER_PY=$(find "$VENV" -name "publisher.py" -path "*/dynamo/vllm/*" 2>/dev/null | head -1)
-if [ -n "$PUBLISHER_PY" ] && grep -q "^        active_decode_blocks = int(self.num_gpu_block \* scheduler_stats.kv_cache_usage)$" "$PUBLISHER_PY" 2>/dev/null; then
-    sed -i 's/^        active_decode_blocks = int(self.num_gpu_block \* scheduler_stats.kv_cache_usage)$/        active_decode_blocks = max(0, int(self.num_gpu_block * scheduler_stats.kv_cache_usage))/' "$PUBLISHER_PY"
-    echo "  publisher.py: negative kv_cache_usage clamp applied ✅"
 fi
 
 # nixl_connector.py (stock vLLM, not vllm-rdu): _pop_done_transfers treats a
@@ -206,6 +197,34 @@ echo "=== ai-dynamo-runtime + ai-dynamo ==="
 pip install -q --no-deps "$DYNAMO_RUNTIME_WHL"
 pip install -q --no-deps "$DYNAMO_WHL"
 
+# publisher.py: clamp kv_cache_usage-derived block count to >= 0.
+# scheduler_stats.kv_cache_usage can go transiently negative after a
+# KV-load-failure reschedule; dynamo's Rust publish() takes an unsigned int
+# and raises OverflowError on a negative value, which kills the whole
+# engine (EngineDeadError) on the very next metrics tick.
+# NOTE: must run after the ai-dynamo install above — dynamo/vllm/publisher.py
+# doesn't exist yet before that point, so this silently no-ops if moved earlier.
+PUBLISHER_PY=$(find "$VENV" -name "publisher.py" -path "*/dynamo/vllm/*" 2>/dev/null | head -1)
+if [ -n "$PUBLISHER_PY" ] && grep -q "^        active_decode_blocks = int(self.num_gpu_block \* scheduler_stats.kv_cache_usage)$" "$PUBLISHER_PY" 2>/dev/null; then
+    sed -i 's/^        active_decode_blocks = int(self.num_gpu_block \* scheduler_stats.kv_cache_usage)$/        active_decode_blocks = max(0, int(self.num_gpu_block * scheduler_stats.kv_cache_usage))/' "$PUBLISHER_PY"
+    echo "  publisher.py: negative kv_cache_usage clamp applied ✅"
+fi
+
+# multimodal_utils/protocol.py: vllm 0.16.0+cpu only exposes MultiModalUUIDDict
+# from vllm.multimodal.inputs, not re-exported at vllm.inputs (that re-export
+# was added in a later vllm version than what this stack pins). ai-dynamo
+# 1.2.1's bare import crashes the whole `python -m dynamo.vllm` entrypoint.
+PROTOCOL_PY=$(find "$VENV" -name "protocol.py" -path "*/dynamo/vllm/multimodal_utils/*" 2>/dev/null | head -1)
+PROTOCOL_PATCH="$REPO_ROOT/patches/dynamo_multimodal_protocol.patch"
+if [ -n "$PROTOCOL_PY" ] && grep -q "^try:$" "$PROTOCOL_PY" 2>/dev/null && grep -q "MultiModalUUIDDict = dict" "$PROTOCOL_PY" 2>/dev/null; then
+    echo "  protocol.py: MultiModalUUIDDict fallback already present ✅"
+elif [ -f "$PROTOCOL_PATCH" ] && [ -n "$PROTOCOL_PY" ]; then
+    SITE_PKG=$(dirname "$(dirname "$(dirname "$PROTOCOL_PY")")")
+    cd "$SITE_PKG" && patch -p1 < "$PROTOCOL_PATCH" && echo "  dynamo_multimodal_protocol.patch applied ✅" || \
+        echo "WARNING: protocol.py patch failed — dynamo.vllm import will crash on this vllm version"
+    cd "$REPO_ROOT"
+fi
+
 # ── Dynamo Python deps (attempt from system site-packages or wheelhouse) ──────
 echo "=== Dynamo messaging deps ==="
 for pkg in aiohttp msgpack pyzmq sortedcontainers uvloop cbor2; do
@@ -215,6 +234,19 @@ done
 # ── NIXL ──────────────────────────────────────────────────────────────────────
 echo "=== nixl ==="
 pip install -q "$NIXL_WHL"
+
+# nixl's meson.build names the installed package after the detected CUDA
+# version (nixl_cu12/nixl_cu13), defaulting to nixl_cu12 when no CUDA
+# toolkit is present at all (our CPU-only RDU build) — there is no plain
+# "nixl" case in its build logic. vllm's nixl_connector.py hardcodes
+# `from nixl._api import ...`, so without this the import fails at runtime.
+# All submodule imports inside the package are relative (`from . import
+# _bindings`), so a directory symlink is a safe, transparent alias.
+NIXL_PKG_DIR=$(find "$VENV/lib/python3.11/site-packages" -maxdepth 1 \( -iname "nixl_cu12" -o -iname "nixl_cu13" \) -type d 2>/dev/null | head -1)
+if [ -n "$NIXL_PKG_DIR" ] && [ ! -e "$VENV/lib/python3.11/site-packages/nixl" ]; then
+    ln -s "$(basename "$NIXL_PKG_DIR")" "$VENV/lib/python3.11/site-packages/nixl"
+    echo "  aliased $(basename "$NIXL_PKG_DIR") -> nixl (vllm imports 'nixl', not the CUDA-suffixed name)"
+fi
 
 # ── vllm-rdu plugin (fast-coe's, pinned — hdi's exact proven connector/engine) ─
 echo "=== vllm-rdu (fast-coe @ $FAST_COE_COMMIT, editable install) ==="

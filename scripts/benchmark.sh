@@ -68,6 +68,11 @@ VENV="$REPO_ROOT/.venv_cp"
 PYTHON="$VENV/bin/python"
 
 mkdir -p "$RESULT_DIR"
+# Resolve to absolute — the script cd's into InferenceX's BENCH_DIR below, and
+# benchmark_serving.py opens --result-dir relative to its own cwd, not the
+# caller's. A relative path here silently ran the whole benchmark, printed
+# correct results to stdout, then crashed writing the JSON summary.
+RESULT_DIR=$(cd "$RESULT_DIR" && pwd)
 
 echo "=== Benchmark ==="
 echo "    endpoint:    $ENDPOINT"

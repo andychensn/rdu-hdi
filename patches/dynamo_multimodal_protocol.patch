@@ -1,0 +1,15 @@
+--- a/dynamo/vllm/multimodal_utils/protocol.py	2026-07-02 22:33:25.948380491 -0700
++++ b/dynamo/vllm/multimodal_utils/protocol.py	2026-07-01 07:42:18.402141115 -0700
+@@ -22,7 +22,11 @@
+ from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+ from pydantic_core import core_schema
+ from typing_extensions import NotRequired
+-from vllm.inputs import MultiModalUUIDDict, TokensPrompt  # noqa: F401
++try:
++    from vllm.inputs import MultiModalUUIDDict, TokensPrompt  # noqa: F401
++except ImportError:
++    from vllm.inputs import TokensPrompt  # noqa: F401
++    MultiModalUUIDDict = dict  # type: ignore
+ from vllm.logprobs import PromptLogprobs
+ from vllm.outputs import CompletionOutput
+ from vllm.sampling_params import SamplingParams

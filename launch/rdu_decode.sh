@@ -20,17 +20,27 @@ if [[ "${1:-}" == "--inner" ]]; then
     # Hardware paths — from cluster.env (BAR2/SambaFlow SDK, like CUDA for RDU)
     # These are already set by cluster.env; snrdu may also inject them from the environment.
 
-    # UCX/NIXL: prefer repo-built; fall back to SOFTWARE_BUILD
+    # UCX/NIXL: repo-built only (scripts/build_rdu_ucx_nixl.sh). No fallback to
+    # an external SOFTWARE_BUILD tree — verified nothing in our stack (NIXL
+    # wheel, our own UCX build, ai-dynamo-runtime, SambaFlow SDK bindings)
+    # depends on it; keeping a silent fallback just hid a stale dependency.
     RDU_UCX="${RDU_UCX:-$REPO_ROOT/rdu-ucx-install}"
-    if [ -d "$RDU_UCX/lib" ]; then
-        _UCX_LIB="$RDU_UCX/lib"
-        _UCX_MOD="$RDU_UCX/lib/ucx"
-        _NIXL_LIB="$RDU_UCX/../wheelhouse"
-    else
-        _UCX_LIB="$SOFTWARE_BUILD/ucx-install/lib"
-        _UCX_MOD="$SOFTWARE_BUILD/ucx-install/lib/ucx"
-        _NIXL_LIB="$SOFTWARE_BUILD/nixl-install/lib"
-    fi
+    [ -d "$RDU_UCX/lib" ] || { echo "ERROR: $RDU_UCX/lib not found — run scripts/build_rdu_ucx_nixl.sh first"; exit 1; }
+    _UCX_LIB="$RDU_UCX/lib"
+    _UCX_MOD="$RDU_UCX/lib/ucx"
+
+    # NIXL ships as a meson-python wheel that vendors its shared libs into a
+    # dot-prefixed sibling dir in site-packages (e.g.
+    # .nixl_cu12.mesonpy.libs/), NOT into wheelhouse/ (which only ever holds
+    # the raw .whl file). libnixl.so etc. live directly in that dir; the UCX
+    # backend plugin (libplugin_UCX.so) lives one level deeper, in its own
+    # plugins/ subdir — so LD_LIBRARY_PATH and NIXL_PLUGIN_DIR need two
+    # DIFFERENT paths, not the same one. Resolve both dynamically rather than
+    # hardcoding a layout guess.
+    _NIXL_LIBS_DIR=$(find "$RDU_VENV/lib/python3.11/site-packages" -maxdepth 1 -iname "*.nixl*.mesonpy.libs" 2>/dev/null | head -1)
+    [ -n "$_NIXL_LIBS_DIR" ] || { echo "ERROR: nixl mesonpy libs dir not found under $RDU_VENV — is nixl installed? (build_rdu_venv.sh)"; exit 1; }
+    _NIXL_LIB="$_NIXL_LIBS_DIR"
+    _NIXL_PLUGIN_DIR="$_NIXL_LIBS_DIR/plugins"
 
     RDU_ROCE_IP_LOCAL=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep '^10\.17\.' | head -1 || true)
     RDU_ROCE_IP_LOCAL=${RDU_ROCE_IP_LOCAL:-$(hostname -I 2>/dev/null | awk '{print $1}')}
@@ -87,7 +97,7 @@ if [[ "${1:-}" == "--inner" ]]; then
     UCX_RCACHE_MAX_UNRELEASED=1024 \
     UCX_LOG_LEVEL=WARN \
     UCX_MODULE_DIR="$_UCX_MOD" \
-    NIXL_PLUGIN_DIR="$_NIXL_LIB" \
+    NIXL_PLUGIN_DIR="$_NIXL_PLUGIN_DIR" \
     INFERENCE_MODE=local_queue \
     PROG_LOAD=HBM \
     ARG_LOAD=HBM \
@@ -104,7 +114,7 @@ if [[ "${1:-}" == "--inner" ]]; then
     VLLM_CONFIG_ROOT="$RDU_CACHE/vllm_config" \
     TRANSFORMERS_CACHE="$RDU_CACHE/huggingface" \
     PYTHONPATH="$BAR2_INSTALL/python:$REPO_ROOT/fast-coe:$REPO_ROOT/fast-coe/server/inference-router/client-py:$REPO_ROOT/fast-coe/server/block_hash:${PYTHONPATH:-}" \
-    LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$SOFTWARE_BUILD/etcd-cpp-api-install/lib:$SOFTWARE_BUILD/gflags-install/lib:$BAR2_RUNTIME_LIBS:$BAR2_INSTALL/lib:${LD_LIBRARY_PATH:-}" \
+    LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$BAR2_RUNTIME_LIBS:$BAR2_INSTALL/lib:${LD_LIBRARY_PATH:-}" \
     LD_PRELOAD="$BAR2_PRELOAD/libc_samba_runtime.so:$BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
         exec python -m dynamo.vllm \
             --model "$MODEL" \
