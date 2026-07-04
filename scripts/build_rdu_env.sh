@@ -93,6 +93,25 @@ fetch_sources() {
         done
     fi
 
+    # bar2-self-build compat: coe_api built from SambaNova/software
+    # josephp/nova/scattergather_integration removed RDUTensor.dtype
+    # (get_tensor(name).dtype) — present on jayr's older coe_api this
+    # FAST_COE_COMMIT pin was originally validated against, but gone from
+    # josephp's branch's RDUTensor (confirmed via dir(coe_api.RDUTensor) on
+    # both; .shape is still present on both). Patch _pef_dtype to try
+    # Checkpoint.get_symbol_properties(name).dtype first (always present,
+    # metadata-only — no hardware copy, unlike RDUTensor.to_torch_tensor()),
+    # falling back to the direct attribute for coe_api builds that still
+    # have it. See scripts/build_bar2.sh and docs/local/DOCKERIZE_BAR2_PLAN.md.
+    PEF_DTYPE_PATCH="$REPO_ROOT/patches/rdu/fast_coe_pef_dtype_symbol_properties.patch"
+    if grep -q "get_symbol_properties(symbol_name).dtype" "$FAST_COE_SRC/server/rdu_manifest/pipeline.py" 2>/dev/null; then
+        echo "  pipeline.py: pef_dtype symbol_properties fallback already present ✅"
+    elif [ -f "$PEF_DTYPE_PATCH" ]; then
+        (cd "$FAST_COE_SRC" && git apply "$PEF_DTYPE_PATCH") && \
+            echo "  fast_coe_pef_dtype_symbol_properties.patch applied ✅" || \
+            echo "WARNING: pef_dtype patch failed — init_decode_state will crash against coe_api builds lacking RDUTensor.dtype"
+    fi
+
     # ── vllm source + torch 2.2.x compat patches ──────────────────────────────
     # PyPI vllm 0.16.0 targets torch 2.9.x and uses APIs unavailable in torch
     # 2.2.0+sn: _symmetric_memory, _unregister_process_group, custom_graph_pass,

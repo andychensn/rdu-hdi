@@ -1,0 +1,25 @@
+diff --git a/server/rdu_manifest/pipeline.py b/server/rdu_manifest/pipeline.py
+index 5e33e3d7b..46b6e6f99 100644
+--- a/server/rdu_manifest/pipeline.py
++++ b/server/rdu_manifest/pipeline.py
+@@ -635,6 +635,20 @@ class Pipeline:
+         prefill_width = self.max_pef_length if self.max_pef_length else 1
+ 
+         def _pef_dtype(symbol_name: str) -> torch.dtype:
++            # RDUTensor.dtype (get_tensor(...).dtype) exists on some coe_api
++            # builds but was removed on others (e.g. self-built rdu_engine
++            # from SambaNova/software josephp/nova/scattergather_integration
++            # lacks it, though .shape is still present there). Checkpoint's
++            # own get_symbol_properties() returns a TensorLayout that always
++            # exposes .dtype without requiring an actual hardware data copy
++            # (unlike RDUTensor.to_torch_tensor()) — use it as the primary
++            # source, keeping the older direct-attribute path as a fallback
++            # for coe_api builds where get_symbol_properties might not cover
++            # every symbol get_tensor does.
++            try:
++                return self.checkpoint.get_symbol_properties(symbol_name).dtype
++            except Exception:  # noqa: BLE001
++                pass
+             try:
+                 return self.checkpoint.get_tensor(symbol_name).dtype
+             except Exception as e:  # noqa: BLE001

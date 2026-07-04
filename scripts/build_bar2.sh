@@ -212,11 +212,28 @@ build_runtime_graph_libs() {
     "$PY311" -m pip install --user -q distro
 
     cd "$SOFTWARE_SRC/runtime"
-    "$PY311" build.py -b graph -bt Release
+    # -rv ts16: this cluster's RDU hardware is Taurus16 (chip codename "sn40+").
+    # Without -rv, build.py defaults to -rv gm (Gemini/sn20) and only builds
+    # hal_snlib_sn20.so — silently wrong-architecture output that still links
+    # and imports fine, but fails at actual RDU session creation with
+    # `Unable to open low-level dynamic lib: libhal_snlib_sn40.so`
+    # (hal_platform.c's dlopen() is runtime chip-detected, not build-time
+    # gated). guoyaof's known-working sw_ddr_rdma tree ships
+    # libhal_snlib_sn40+.so (WITH the plus, confirming ts16/TAURUS16, not
+    # plain ts/TAURUS which would produce sn40 without a plus — see
+    # runtime/src/lib/hal/hal_platform.c and runtime/python/utils.py's
+    # rdu_ver_to_sn_ver map).
+    "$PY311" build.py -b graph -bt Release -rv ts16
 
+    # hal_snlib_{sn_version} is the only HAL target the "graph" group builds
+    # (there's no corresponding hal_snd_* CMake target in this target group —
+    # HAL_SNDLIB in hal_platform.c's arch table is for a different subsystem
+    # this stack doesn't use). Only glob for what's actually built.
     mkdir -p "$RUNTIME_INSTALL/lib"
-    rm -f "$RUNTIME_INSTALL/lib/"libc_samba_runtime.so* "$RUNTIME_INSTALL/lib/"libcpp_samba_runtime.so*
-    cp build/graph/lib/libc_samba_runtime.so* build/graph/lib/libcpp_samba_runtime.so* "$RUNTIME_INSTALL/lib/"
+    rm -f "$RUNTIME_INSTALL/lib/"libc_samba_runtime.so* "$RUNTIME_INSTALL/lib/"libcpp_samba_runtime.so* \
+          "$RUNTIME_INSTALL/lib/"libhal_snlib_*.so*
+    cp build/graph/lib/libc_samba_runtime.so* build/graph/lib/libcpp_samba_runtime.so* \
+       build/graph/lib/libhal_snlib_*.so* "$RUNTIME_INSTALL/lib/"
     echo "  copied graph-group libs to $RUNTIME_INSTALL/lib/"
     ls "$RUNTIME_INSTALL/lib/"
 }
