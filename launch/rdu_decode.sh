@@ -113,8 +113,8 @@ if [[ "${1:-}" == "--inner" ]]; then
     HF_HOME="$RDU_CACHE/huggingface" \
     VLLM_CONFIG_ROOT="$RDU_CACHE/vllm_config" \
     TRANSFORMERS_CACHE="$RDU_CACHE/huggingface" \
-    PYTHONPATH="$REPO_ROOT/fast-coe:$REPO_ROOT/fast-coe/server/inference-router/client-py:$REPO_ROOT/fast-coe/server/block_hash:${PYTHONPATH:-}" \
-    LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$BAR2_RUNTIME_LIBS:${LD_LIBRARY_PATH:-}" \
+    PYTHONPATH="$BAR2_INSTALL/python:$REPO_ROOT/fast-coe:$REPO_ROOT/fast-coe/server/inference-router/client-py:$REPO_ROOT/fast-coe/server/block_hash:${PYTHONPATH:-}" \
+    LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$BAR2_RUNTIME_LIBS:$BAR2_INSTALL/lib:${LD_LIBRARY_PATH:-}" \
     LD_PRELOAD="$BAR2_PRELOAD/libc_samba_runtime.so:$BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
         exec python -m dynamo.vllm \
             --model "$MODEL" \
