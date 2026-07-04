@@ -12,12 +12,16 @@
 #
 # Phase 2 (RDU node via snrdu, INSIDE the rhel810-dev container — see below
 # for why bare metal doesn't work):
-#   source config/cluster.env config/model.env
+#   source config/cluster.env; source config/model.env
 #   snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
 #       --allow-local-lib-python --reservation "$RDU_RESERVATION" \
 #       --pef "$PEF" --timeout "$RDU_TIMEOUT" \
 #       -o logs/build_bar2.log \
 #       -- bash scripts/build_bar2.sh --build-only
+#
+# NOTE: `source a.env b.env` only sources a.env — bash's `source` treats
+# extra args as $1.. for the sourced script, not additional files. Always
+# source config files as separate statements.
 #
 # Why the container and not bare metal: this repo's Bazel cc_toolchain
 # hardcodes gcc-toolset-13 for libstdc++ headers (bazel/cc/sn_cc_rules.bzl:
@@ -33,8 +37,10 @@
 # mount is needed (and is in fact blocked by the wrapper for security).
 # Outputs:
 #   $REPO_ROOT/bar2-build-src/software/   — pinned SambaNova/software checkout
-#   $REPO_ROOT/wheelhouse/                — sambanova_rdu_engine_api-*.whl
-#   $REPO_ROOT/rdu-runtime-install/lib/   — libc_samba_runtime.so, libcpp_samba_runtime.so
+#   $REPO_ROOT/wheelhouse/                — sambanova_rdu_engine_api-*.whl (rdu_engine)
+#                                            and sambanova_coe_api-*.whl (coe_api compat shim)
+#   $REPO_ROOT/rdu-runtime-install/lib/   — libc_samba_runtime.so, libcpp_samba_runtime.so,
+#                                            libLlvm21.so (coe_api's runtime — not build-time — dep)
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
@@ -126,19 +132,67 @@ build_coe_api_wheel() {
     # be unrelated to sandboxing at all. Harmless to leave on: we're building
     # on one known, controlled environment, not chasing cross-machine Bazel
     # sandbox hermeticity.
+    # rdu_engine_py311_wheel: the real pybind module (rdu_engine.*.so).
+    # coe_api_py311_wheel: a *separate* Bazel target — a thin backward-compat
+    # shim (coe_api.*.so, built from py_coe_api_compat.cpp) that re-exports
+    # rdu_engine under the legacy `coe_api` name. All of fast-coe/vllm-rdu's
+    # production code imports `coe_api`, not `rdu_engine` — jayr's existing
+    # working BAR2_INSTALL tree ships both .so files side by side, so both
+    # must be built here too or `import coe_api` silently falls back to
+    # whatever ambient system install happens to be on the node.
     "$BAZELISK_BIN" --output_base="$BAZEL_OUTPUT_BASE" build -c opt \
         --strategy=CppCompile=local \
-        //frontend/nova/coe_api:rdu_engine_py311_wheel
+        //frontend/nova/coe_api:rdu_engine_py311_wheel \
+        //frontend/nova/coe_api:coe_api_py311_wheel
 
-    WHEEL=$("$BAZELISK_BIN" --output_base="$BAZEL_OUTPUT_BASE" cquery --output=files \
-        //frontend/nova/coe_api:rdu_engine_py311_wheel 2>/dev/null | tail -1)
-    [ -f "$WHEEL" ] || { echo "ERROR: expected wheel not found at $WHEEL"; exit 1; }
-    # -f: bazel's own build outputs are read-only, and a re-run (e.g. from a
-    # different container invocation, possibly a different UID) can't
-    # overwrite a previous run's copy without forcing it.
-    rm -f "$WHEELHOUSE/$(basename "$WHEEL")"
-    cp "$WHEEL" "$WHEELHOUSE/"
-    echo "  copied $(basename "$WHEEL") to $WHEELHOUSE/"
+    for target in //frontend/nova/coe_api:rdu_engine_py311_wheel //frontend/nova/coe_api:coe_api_py311_wheel; do
+        WHEEL=$("$BAZELISK_BIN" --output_base="$BAZEL_OUTPUT_BASE" cquery --output=files \
+            "$target" 2>/dev/null | tail -1)
+        [ -f "$WHEEL" ] || { echo "ERROR: expected wheel not found for $target at $WHEEL"; exit 1; }
+        # -f: bazel's own build outputs are read-only, and a re-run (e.g. from a
+        # different container invocation, possibly a different UID) can't
+        # overwrite a previous run's copy without forcing it.
+        rm -f "$WHEELHOUSE/$(basename "$WHEEL")"
+        cp "$WHEEL" "$WHEELHOUSE/"
+        echo "  copied $(basename "$WHEEL") to $WHEELHOUSE/"
+    done
+}
+
+# rdu_engine.so dynamically loads these at IMPORT time — not needed at
+# build time, which is why the earlier "does coe_api need the full compiler"
+# analysis in DOCKERIZE_BAR2_PLAN.md missed them (that analysis only traced
+# *build-time* deps). Discovered by actually importing the built wheel and
+# iterating on ImportErrors, then getting the complete list at once via
+# `ldd rdu_engine.cpython-311-x86_64-linux-gnu.so | grep "not found"`
+# instead of continuing one error at a time. None of these are bundled by
+# coe_api's own wheel rule — they're separate repo-wide "export bundle"
+# cc_shared_library targets other binaries dynamic-link against.
+EXTRA_RUNTIME_SHARED_LIBS=(
+    "//bazel/third_party:llvm-21-so"             # libLlvm21.so
+    "//bazel/third_party:abseil-so"              # libAbseil.so
+    "//common/pef/src:lib-jit-function-so"       # libJITFunction.so
+    "//common/pef/src:pef-bitfile-patching-so"   # libPefBitfilePatching.so
+    "//common/pin:pin-compiler-so"               # libPinCompiler.so
+)
+
+build_extra_runtime_shared_libs() {
+    echo "=== Building extra runtime-only shared libs (Bazel) $(date) ==="
+    ensure_bazelisk
+    mkdir -p "$BAZEL_OUTPUT_BASE" "$RUNTIME_INSTALL/lib"
+    export XDG_CACHE_HOME="/scratch/$USER/.cache"
+    cd "$SOFTWARE_SRC"
+    "$BAZELISK_BIN" --output_base="$BAZEL_OUTPUT_BASE" build -c opt \
+        --strategy=CppCompile=local \
+        "${EXTRA_RUNTIME_SHARED_LIBS[@]}"
+
+    for target in "${EXTRA_RUNTIME_SHARED_LIBS[@]}"; do
+        LIB=$("$BAZELISK_BIN" --output_base="$BAZEL_OUTPUT_BASE" cquery --output=files \
+            "$target" 2>/dev/null | tail -1)
+        [ -f "$LIB" ] || { echo "ERROR: expected output not found for $target at $LIB"; exit 1; }
+        rm -f "$RUNTIME_INSTALL/lib/$(basename "$LIB")"
+        cp "$LIB" "$RUNTIME_INSTALL/lib/"
+        echo "  copied $(basename "$LIB") to $RUNTIME_INSTALL/lib/"
+    done
 }
 
 build_runtime_graph_libs() {
@@ -179,6 +233,8 @@ build_on_rdu_node() {
 
     build_coe_api_wheel
     echo ""
+    build_extra_runtime_shared_libs
+    echo ""
     build_runtime_graph_libs
     echo ""
     echo "=== BAR2 self-build COMPLETE $(date) ==="
@@ -195,7 +251,7 @@ case "$MODE" in
         echo ""
         echo "Sources fetched. Now submit the build job on the RDU node:"
         echo ""
-        echo "  source config/cluster.env config/model.env"
+        echo "  source config/cluster.env; source config/model.env"
         echo "  snrdu run -sp \"\$RDU_PARTITION\" --qos \"\$RDU_QOS\" --nodelist \"\$RDU_NODE\" \\"
         echo "      --allow-local-lib-python --reservation \"\$RDU_RESERVATION\" \\"
         echo "      --pef \"\$PEF\" --timeout \"\$RDU_TIMEOUT\" \\"
