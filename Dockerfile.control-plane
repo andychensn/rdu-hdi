@@ -1,0 +1,70 @@
+# Control-plane image for rdu-hdi disaggregated inference: etcd + NATS +
+# Dynamo HTTP frontend, all three bundled into one lightweight image (no
+# RDU/GPU/NFS dependency — matches launch/control_plane.sh's process set,
+# which this image's entrypoint (docker/control-plane-entrypoint.sh) mirrors).
+#
+# Build (from login node):
+#   bash scripts/build_docker_control_plane.sh
+#
+# Run standalone (for local testing outside k8s):
+#   docker run --rm -p 12379:12379 -p 14222:14222 -p 18000:18000 \
+#       -e CONTROL_PLANE_IP=0.0.0.0 IMAGE
+#
+# All ARGs below are intentionally declared with NO default value — see
+# Dockerfile.gpu's comment for why: config/versions.env is the single
+# source of truth, scripts/build_docker_control_plane.sh passes every
+# value via --build-arg, and a default here would silently drift.
+ARG ETCD_VERSION
+ARG NATS_VERSION
+ARG DYNAMO_VERSION
+
+FROM python:3.12-slim AS final
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── etcd + nats-server binaries ───────────────────────────────────────────────
+# Fetched and SHA256-verified exactly like scripts/fetch_vendor.sh does for
+# the bare-metal launch path, so both paths pull the identical, pinned
+# release artifact.
+ARG ETCD_VERSION
+ARG ETCD_SHA256
+ARG NATS_VERSION
+ARG NATS_SHA256
+RUN mkdir -p /opt/vendor/bin /tmp/vendor-fetch && cd /tmp/vendor-fetch && \
+    curl -fL --progress-bar \
+        "https://github.com/etcd-io/etcd/releases/download/v${ETCD_VERSION}/etcd-v${ETCD_VERSION}-linux-amd64.tar.gz" \
+        -o etcd.tar.gz && \
+    tar -xzf etcd.tar.gz --strip-components=1 "etcd-v${ETCD_VERSION}-linux-amd64/etcd" && \
+    echo "${ETCD_SHA256}  etcd" | sha256sum -c - && \
+    cp etcd /opt/vendor/bin/etcd && chmod +x /opt/vendor/bin/etcd && \
+    curl -fL --progress-bar \
+        "https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/nats-server-v${NATS_VERSION}-linux-amd64.tar.gz" \
+        -o nats.tar.gz && \
+    tar -xzf nats.tar.gz "nats-server-v${NATS_VERSION}-linux-amd64/nats-server" && \
+    echo "${NATS_SHA256}  nats-server-v${NATS_VERSION}-linux-amd64/nats-server" | sha256sum -c - && \
+    cp "nats-server-v${NATS_VERSION}-linux-amd64/nats-server" /opt/vendor/bin/nats-server && \
+    chmod +x /opt/vendor/bin/nats-server && \
+    cd / && rm -rf /tmp/vendor-fetch
+
+# ── ai-dynamo (dynamo.frontend) + runtime deps ────────────────────────────────
+# Matches launch/control_plane.sh's .venv_cp bootstrap exactly (same package
+# list, same "no [vllm] extra" reasoning as Dockerfile.gpu: the frontend only
+# needs dynamo.frontend, not the vllm-coupled extras).
+ARG DYNAMO_VERSION
+RUN pip install --no-cache-dir \
+        "ai-dynamo==${DYNAMO_VERSION}" "ai-dynamo-runtime==${DYNAMO_VERSION}" \
+        pydantic fastapi uvicorn aiohttp msgpack pyzmq uvloop sortedcontainers \
+        cbor2 diskcache
+
+COPY docker/control-plane-entrypoint.sh /opt/control-plane-entrypoint.sh
+RUN chmod +x /opt/control-plane-entrypoint.sh
+
+# Validate the image at build time.
+RUN /opt/vendor/bin/etcd --version && \
+    /opt/vendor/bin/nats-server --version && \
+    python3 -c "import dynamo.frontend; print('dynamo.frontend: OK')"
+
+EXPOSE 12379 14222 18000
+ENTRYPOINT ["/opt/control-plane-entrypoint.sh"]
