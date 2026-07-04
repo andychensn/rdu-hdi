@@ -1,0 +1,63 @@
+# Control plane: etcd + NATS + Dynamo HTTP frontend, one container (Dockerfile.control-plane).
+# No RDU/GPU/NFS dependency -- runs on any CPU node (plan §5 "Phase 3" note).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rdu-hdi-control-plane
+  labels:
+    app: rdu-hdi-control-plane
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # etcd's data-dir is a Pod-local emptyDir -- avoid two etcd instances at once
+  selector:
+    matchLabels:
+      app: rdu-hdi-control-plane
+  template:
+    metadata:
+      labels:
+        app: rdu-hdi-control-plane
+    spec:
+      containers:
+        - name: control-plane
+          image: sc-artifacts2.sambanovasystems.com/sw-docker-scratch/rdu-hdi-control-plane:v1.2.1-rdu-hdi.1
+          env:
+            # CONTROL_PLANE_IP here must be THIS pod's own reachable address for etcd's
+            # --advertise-client-urls -- the Service DNS name works for that purpose too, since
+            # it always resolves back to this Deployment's pod.
+            - name: CONTROL_PLANE_IP
+              valueFrom:
+                configMapKeyRef: {name: rdu-hdi-config, key: CONTROL_PLANE_IP}
+            - name: ETCD_PORT
+              valueFrom:
+                configMapKeyRef: {name: rdu-hdi-config, key: ETCD_PORT}
+            - name: NATS_PORT
+              valueFrom:
+                configMapKeyRef: {name: rdu-hdi-config, key: NATS_PORT}
+            - name: VLLM_PORT
+              valueFrom:
+                configMapKeyRef: {name: rdu-hdi-config, key: VLLM_PORT}
+          ports:
+            - {name: etcd, containerPort: 12379}
+            - {name: nats, containerPort: 14222}
+            - {name: http, containerPort: 18000}
+          volumeMounts:
+            - {name: etcd-data, mountPath: /tmp/etcd-data}
+          resources:
+            requests: {cpu: "1", memory: 1Gi}
+            limits: {cpu: "2", memory: 2Gi}
+      volumes:
+        - name: etcd-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rdu-hdi-control-plane
+spec:
+  selector:
+    app: rdu-hdi-control-plane
+  ports:
+    - {name: etcd, port: 12379, targetPort: etcd}
+    - {name: nats, port: 14222, targetPort: nats}
+    - {name: http, port: 18000, targetPort: http}

@@ -1,0 +1,44 @@
+# Non-secret cluster/model config, mirrors config/cluster.env + config/model.env.
+# Edit this file (not the Deployments) when switching models, clusters, or images.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rdu-hdi-config
+data:
+  # ── Ports (config/cluster.env) ──────────────────────────────────────────────
+  ETCD_PORT: "12379"
+  NATS_PORT: "14222"
+  VLLM_PORT: "18000"
+
+  # ── Images (config/cluster.env — edit tags here when rebuilding) ───────────
+  CONTROL_PLANE_IMAGE: "sc-artifacts2.sambanovasystems.com/sw-docker-scratch/rdu-hdi-control-plane:v1.2.1-rdu-hdi.1"
+  GPU_IMAGE: "sc-artifacts2.sambanovasystems.com/sw-docker-scratch/rdu-hdi-gpu-prefill:v0.16.0-rdu-hdi.3"
+  RDU_IMAGE: "sc-artifacts2.sambanovasystems.com/sw-docker-scratch/rdu-hdi-rdu-decode:v1.2.1-rdu-hdi.1"
+
+  # ── Control plane URL, resolved via the Service (see 02-control-plane.yaml) ─
+  # docker/control-plane-entrypoint.sh and docker/rdu-decode-entrypoint.sh only ever use this to
+  # build http://.../nats://... URLs -- a Service DNS name works exactly like the bare-metal
+  # literal IP (10.10.0.156) did.
+  CONTROL_PLANE_IP: "rdu-hdi-control-plane.default.svc.cluster.local"
+
+  # ── BAR2 / SambaFlow SDK paths (config/cluster.env) ─────────────────────────
+  # Deferred self-build (2026-07-04 project decision) -- these remain NFS paths, mounted into pods
+  # via the /import hostPath volume (see 04-rdu-decode.yaml), same as docker-run-wrapper's own
+  # automatic /import mount on bare SLURM/RDU nodes.
+  BAR2_INSTALL: "/import/snvm-sc-scratch2/jayr/sambaflow_gTkgyGCEBH/bazel-install"
+  BAR2_RUNTIME_LIBS: "/import/snvm-sc-scratch1/guoyaof/sw_ddr_rdma/runtime/build/graph/lib"
+  BAR2_PRELOAD: "/import/snvm-sc-scratch1/guoyaof/sw_ddr_rdma_install/bar2_preload_libs"
+
+  # ── Model checkpoint / PEF (config/model.env) ───────────────────────────────
+  MODEL: "/import/ml-sc-scratch6/yund/checkpoints/MiniMax-M2.7"
+  SERVED_MODEL_NAME: "MiniMax-M2.7"
+  PEF: "/import/ml-sc-scratch4/jayr/minimax_m2__full_layers_tp16_ssss_cg_ss_max_ss_tg_parallel_sdk_fp8_per_tensor/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608.pef"
+  # Same /import hostPath mount as BAR2_* covers this too, since the repo itself lives under /import.
+  MODEL_CONFIG: "/import/snvm-sc-scratch1/andyc/rdu-hdi/config/minimax_m2.yaml"
+
+  # ── vLLM / inference settings (config/model.env) ────────────────────────────
+  TENSOR_PARALLEL_SIZE: "4"
+  MAX_MODEL_LEN: "196608"
+  MAX_NUM_BATCHED_TOKENS: "4096"
+  BLOCK_SIZE: "64"
+  GPU_MEMORY_UTILIZATION: "0.90"

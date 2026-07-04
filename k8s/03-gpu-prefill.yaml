@@ -1,0 +1,122 @@
+# GPU prefill worker. Docker precedent: launch/gpu_prefill.sh's --inner block
+# (cuda-docker-run-wrapper --net=host --ulimit memlock=-1 --device /dev/infiniband ...).
+# k8s translation is NOT "just request nvidia.com/gpu" (plan §5) -- the RDMA/hostNetwork/memlock
+# requirements from the Docker invocation carry over identically, same as RDU decode (plan §4.8).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rdu-hdi-gpu-prefill
+  labels:
+    app: rdu-hdi-gpu-prefill
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rdu-hdi-gpu-prefill
+  template:
+    metadata:
+      labels:
+        app: rdu-hdi-gpu-prefill
+    spec:
+      # Placeholder label -- adjust to this cluster's actual GPU node labeling convention.
+      nodeSelector:
+        nvidia.com/gpu: "true"
+      hostNetwork: true  # RoCE IP visibility for UCX/NIXL -- same as --net=host on bare Docker
+      dnsPolicy: ClusterFirstWithHostNet  # required so Service DNS (CONTROL_PLANE_IP) still resolves under hostNetwork
+      containers:
+        - name: gpu-prefill
+          image: sc-artifacts2.sambanovasystems.com/sw-docker-scratch/rdu-hdi-gpu-prefill:v0.16.0-rdu-hdi.3
+          command: ["python3"]
+          args:
+            - -m
+            - dynamo.vllm
+            - --model
+            - "$(MODEL)"
+            - --served-model-name
+            - "$(SERVED_MODEL_NAME)"
+            - --disaggregation-mode
+            - prefill
+            - --tensor-parallel-size
+            - "$(TENSOR_PARALLEL_SIZE)"
+            - --max-model-len
+            - "$(MAX_MODEL_LEN)"
+            - --gpu-memory-utilization
+            - "$(GPU_MEMORY_UTILIZATION)"
+            - --max-num-batched-tokens
+            - "$(MAX_NUM_BATCHED_TOKENS)"
+            - --block-size
+            - "$(BLOCK_SIZE)"
+            - --enable-prefix-caching
+            - --reasoning-parser
+            - minimax_m2_append_think
+            - --trust-remote-code
+            - --kv-transfer-config
+            - '{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_buffer_device":"cuda","enable_permute_local_kv":true,"kv_connector_extra_config":{"enforce_handshake_compat":false,"backends":["UCX"]}}'
+          envFrom:
+            - configMapRef: {name: rdu-hdi-config}
+          env:
+            - name: ETCD_ENDPOINTS
+              value: "http://$(CONTROL_PLANE_IP):$(ETCD_PORT)"
+            - name: NATS_SERVER
+              value: "nats://$(CONTROL_PLANE_IP):$(NATS_PORT)"
+            - name: DYN_REQUEST_PLANE
+              value: tcp
+            - name: VLLM_NIXL_SIDE_CHANNEL_HOST
+              valueFrom: {fieldRef: {fieldPath: status.hostIP}}  # hostNetwork pod's own IP -- equivalent of gpu_prefill.sh's `hostname -I` grep for a 10.17.* address; verify this resolves to the RoCE NIC on your cluster, not a management IP (plan §4.10 flags this as network-identity-dependent, re-derive per cluster)
+            - name: VLLM_NIXL_SIDE_CHANNEL_PORT
+              value: "5600"
+            - name: VLLM_PD_CHUNK_OVERLAP
+              value: "0"
+            - name: VLLM_PD_STAGE_TIMING
+              value: "0"
+            - name: VLLM_USE_DEEP_GEMM
+              value: "0"
+            - name: VLLM_USE_FLASHINFER_MOE_FP8
+              value: "0"
+            - name: NCCL_IB_DISABLE
+              value: "1"
+            - name: NCCL_P2P_LEVEL
+              value: NVL
+            - name: UCX_MODULE_DIR
+              value: /opt/ucx/lib/ucx
+            - name: UCX_TLS
+              value: rc,cuda_copy,cuda_ipc
+            - name: UCX_NET_DEVICES
+              value: "bnxt_re0:1"  # hardcoded NIC name, plan §4.10 -- confirm matches the actual RDMA NIC on target k8s GPU nodes
+            - name: UCX_IB_ROCE_REACHABILITY_MODE
+              value: all
+            - name: HF_HOME
+              value: /cache/huggingface
+            - name: VLLM_CACHE_ROOT
+              value: /cache/vllm
+            - name: TRITON_CACHE_DIR
+              value: /cache/triton
+            - name: TORCHINDUCTOR_CACHE_DIR
+              value: /cache/inductor
+            - name: FLASHINFER_WORKSPACE_BASE
+              value: /cache/flashinfer
+            - name: VLLM_CONFIG_ROOT
+              value: /cache/vllm_config
+          resources:
+            requests: {cpu: "8", memory: 32Gi}
+            limits:
+              cpu: "16"
+              memory: 64Gi
+              nvidia.com/gpu: "4"  # matches config/cluster.env's GPU_GRES=gpu:4
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK"]  # k8s-native equivalent of --ulimit memlock=-1 (plan §4.8)
+          volumeMounts:
+            - {name: dev-infiniband, mountPath: /dev/infiniband}
+            - {name: import-nfs, mountPath: /import}
+            - {name: cache, mountPath: /cache}
+            - {name: dshm, mountPath: /dev/shm}  # equivalent of --shm-size=1g
+      volumes:
+        - name: dev-infiniband
+          hostPath: {path: /dev/infiniband}
+        - name: import-nfs
+          hostPath: {path: /import}
+        - name: cache
+          emptyDir: {}
+        - name: dshm
+          emptyDir: {medium: Memory, sizeLimit: 1Gi}

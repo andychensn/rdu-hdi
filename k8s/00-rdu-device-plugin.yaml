@@ -1,0 +1,27 @@
+# REFERENCE STUB — NOT the real device plugin manifest.
+#
+# The actual RDU kubelet device plugin (resource `sambanova.ai/rdu-tile`) lives in SambaNova's
+# software repo at k8s/k8s-device-plugin/rdu-plugin-ds.yaml (see
+# docs/local/DOCKERIZE_BAR2_PLAN.md §4.6b) — it already exists and is deployable as-is; this project
+# is not writing it, only depending on it. Fabricating a lookalike manifest here (without access to
+# the real source image/RBAC/args) would risk silently diverging from the real one, so this file
+# documents the CONTRACT the rest of k8s/*.yaml assumes instead:
+#
+#   - Deployed as a DaemonSet on every RDU-equipped node.
+#   - Registers resource `sambanova.ai/rdu-tile` (tile granularity: 4 tiles/RDU non-TGM, 8 on TGM).
+#   - Gates readiness on `/sys/class/rdu_class` existing (fails with "SND not running" if the
+#     rdu_driver.ko module isn't loaded / snd.service isn't healthy) — this is the "is the node
+#     actually RDU-ready" check `04-rdu-decode.yaml`'s pod scheduling implicitly relies on via
+#     `resources.limits: {sambanova.ai/rdu-tile: N}`.
+#   - Wires `/dev/rdu` and `/dev/rdu_mem_map` into the consuming pod on Allocate() — it does NOT
+#     wire RDMA/network/memlock (see 04-rdu-decode.yaml's own hostPath/hostNetwork/IPC_LOCK, which
+#     cover that separate gap, plan §4.8).
+#   - Runs non-privileged (explicitly drops capabilities, allowPrivilegeEscalation: false).
+#
+# Per-node prerequisites the device plugin's own readiness check assumes (plan §4.7 — one-time,
+# per-physical-host provisioning, same category as installing a GPU driver, not something this
+# project's Dockerfiles/manifests provision):
+#   modprobe rdu && modprobe rdu_mem_map && modprobe rdu_peer_mem_client
+#   systemctl start snd   # after the modules load
+#
+# Deploy with: kubectl apply -f <path-to-real-rdu-plugin-ds.yaml-from-the-software-repo>
