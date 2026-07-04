@@ -1,0 +1,94 @@
+# RDU decode image for rdu-hdi disaggregated inference.
+#
+# Bakes in: /opt/sambanova's Python 3.11 + torch==2.2.0+sn (from the base
+# image — provenance not fully self-traced, see docs/local/DOCKERIZE_BAR2_PLAN.md
+# §4.4), vllm+cpu + ai-dynamo + fast-coe's vllm-rdu + UCX/NIXL — the last
+# three COPIED as pre-built binary artifacts from this repo's own
+# wheelhouse/ and rdu-ucx-install/ (built once via scripts/build_rdu_env.sh,
+# NOT rebuilt in this Dockerfile — they're pure binaries with no
+# glibc/CPU-microarch surprises expected on this node family).
+#
+# Does NOT bake in coe_api/rdu_engine or the BAR2 runtime connector libs
+# (BAR2_INSTALL/BAR2_RUNTIME_LIBS/BAR2_PRELOAD). Per an explicit 2026-07-04
+# project decision (self-building coe_api from either candidate
+# SambaNova/software branch hit a hard ABI/hardware-compatibility blocker
+# against the currently-working PEF — see config/versions.env's
+# SOFTWARE_REPO_* comment), these are supplied at container RUNTIME from
+# their existing NFS paths (docker/rdu-decode-entrypoint.sh), exactly like
+# bare-metal launch/rdu_decode.sh's --inner block already does via
+# PYTHONPATH/LD_LIBRARY_PATH/LD_PRELOAD. docker-run-wrapper on RDU nodes
+# auto-mounts /import and /scratch at identical host paths (confirmed this
+# session via the BAR2 self-build container work), so no explicit -v mount
+# is needed there; a k8s pod spec needs an explicit hostPath volume
+# instead (see Phase 5 k8s manifests).
+#
+# RUN this image with --net=host (RoCE IP visibility, matching
+# gpu_prefill.sh's own --net=host requirement) and explicit device
+# passthrough for /dev/rdu, /dev/rdu_mem_map, AND /dev/infiniband (three
+# separate requirements — docker-run-wrapper's automatic /import,/scratch
+# NFS mounting covers none of them, and --net=host alone gives network-
+# NAMESPACE visibility but not RDMA hardware access). All are world-
+# accessible on this cluster (confirmed via direct inspection), so
+# `--device /dev/rdu --device /dev/rdu_mem_map --device /dev/infiniband`
+# needs no privileged mode — same RDMA-device pattern gpu_prefill.sh
+# already uses. A k8s pod spec uses the sambanova.ai/rdu-tile device
+# plugin for /dev/rdu*, plus a hostPath volume for /dev/infiniband (see
+# Phase 5 k8s manifests).
+#
+# Build (from the login node — the FROM base image brings /opt/sambanova
+# along, same principle as Dockerfile.gpu bringing CUDA along via FROM
+# vllm/vllm-openai; no snrdu/RDU node needed to BUILD this image, only to
+# RUN it):
+#   bash scripts/build_docker_rdu.sh
+ARG RHEL810_DEV_IMAGE
+
+FROM ${RHEL810_DEV_IMAGE} AS final
+
+RUN dnf install -y git patch rdma-core libibverbs libibverbs-utils && dnf clean all
+
+# SambaNova's RDMA userland replaces the stock rdma-core bnxt_re provider,
+# which on this cluster's hardware sends usable-transport-breaking ioctls
+# (confirmed by direct bare-metal comparison on sc3-s339: the stock
+# libbnxt_re-rdmav34.so there is deliberately disabled -- renamed .orig --
+# in favor of this one via /opt/sambanova/share/sambanova-deps-brcm-roce-userland/libbnxt_re.sh).
+# Without it, UCX reports "no usable transports/devices" for bnxt_re0/2/4/6.
+# rhel810-dev's base /opt/sambanova does not ship this package, so it's
+# vendored directly (vendor/bnxt_re/, pulled from bare metal).
+COPY vendor/bnxt_re/libbnxt_re-rdmav34.so /tmp/libbnxt_re-rdmav34.so
+COPY vendor/bnxt_re/bnxt_re.driver /tmp/bnxt_re.driver
+RUN bash -c ' \
+    [ -f /usr/lib64/libibverbs/libbnxt_re-rdmav34.so ] && mv /usr/lib64/libibverbs/libbnxt_re-rdmav34.so /usr/lib64/libibverbs/libbnxt_re-rdmav34.so.orig; \
+    [ -f /etc/libibverbs.d/bnxt_re.driver ] && mv /etc/libibverbs.d/bnxt_re.driver /etc/libibverbs.d/bnxt_re.driver.orig; \
+    cp /tmp/libbnxt_re-rdmav34.so /usr/lib64/libibverbs/libbnxt_re-rdmav34.so && \
+    cp /tmp/bnxt_re.driver /etc/libibverbs.d/bnxt_re.driver && \
+    rm -f /tmp/libbnxt_re-rdmav34.so /tmp/bnxt_re.driver && \
+    ldconfig'
+
+ENV PATH=/opt/sambanova/bin:$PATH
+ENV PYTHONNOUSERSITE=1
+
+# ── UCX (pre-built) ────────────────────────────────────────────────────────
+COPY rdu-ucx-install/ /opt/rdu-ucx/
+ENV LD_LIBRARY_PATH=/opt/rdu-ucx/lib:${LD_LIBRARY_PATH:-}
+ENV UCX_MODULE_DIR=/opt/rdu-ucx/lib/ucx
+
+# ── Python deps (vllm+cpu, ai-dynamo, fast-coe's vllm-rdu, NIXL, patches) ──
+COPY wheelhouse/ /build/wheelhouse/
+COPY patches/rdu/ /build/patches/rdu/
+# .dockerignore excludes fast-coe/.git/ from the build context entirely
+# (keeps the context small) — scripts/build_docker_rdu.sh verifies the
+# checkout is at the pinned FAST_COE_COMMIT on the login node, before this
+# COPY, since the commit can't be checked here without the .git directory.
+COPY fast-coe/ /build/fast-coe/
+
+ARG RDU_TRANSFORMERS_VERSION
+COPY docker/rdu-decode-install-deps.sh /build/rdu-decode-install-deps.sh
+RUN chmod +x /build/rdu-decode-install-deps.sh && \
+    RDU_TRANSFORMERS_VERSION="${RDU_TRANSFORMERS_VERSION}" /build/rdu-decode-install-deps.sh
+
+COPY docker/rdu-decode-entrypoint.sh /opt/rdu-decode-entrypoint.sh
+RUN chmod +x /opt/rdu-decode-entrypoint.sh
+
+RUN rm -rf /build/wheelhouse /build/patches
+
+ENTRYPOINT ["/opt/rdu-decode-entrypoint.sh"]
