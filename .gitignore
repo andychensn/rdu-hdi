@@ -31,6 +31,8 @@ fast-coe/
 InferenceX/
 vendor/bin/
 rdu-build-src/
+bar2-build-src/
+rdu-runtime-install/
 
 # Cluster-specific local notes
 docs/local/
