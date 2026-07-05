@@ -106,24 +106,6 @@ fetch_sources() {
         fi
         echo "  checked out $(git -C "$SOFTWARE_SRC" rev-parse HEAD)"
     fi
-
-    apply_local_patches
-}
-
-# The pinned commit needs one additional local patch (adds
-# CoETensor/RDUTensor.dtype -- see config/versions.env's SOFTWARE_REPO_*
-# comment for why this matters: fast-coe's pipeline.py was validated against
-# a coe_api build WITH this attribute), captured as our own patch file so
-# the build doesn't depend on any one engineer's personal checkout surviving.
-apply_local_patches() {
-    local PATCH="$REPO_ROOT/patches/software-repo/coe_api_rdutensor_dtype.patch"
-    [ -f "$PATCH" ] || { echo "ERROR: $PATCH not found"; exit 1; }
-    if git -C "$SOFTWARE_SRC" apply --reverse --check "$PATCH" 2>/dev/null; then
-        echo "  coe_api_rdutensor_dtype.patch already applied, skipping"
-        return
-    fi
-    git -C "$SOFTWARE_SRC" apply "$PATCH"
-    echo "  applied patches/software-repo/coe_api_rdutensor_dtype.patch"
 }
 
 RHEL810_DEV_IMAGE="artifacts.sambanovasystems.com/sw-docker/rhel810-dev:latest"

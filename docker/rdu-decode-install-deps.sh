@@ -251,13 +251,13 @@ $PY -c "from dynamo.vllm.main import main; print('dynamo.vllm.main: OK')"
 # coe_api/rdu_engine are baked in (self-built, not NFS-mounted) --
 # LD_LIBRARY_PATH already includes /opt/bar2-runtime/lib via this
 # Dockerfile's own ENV instruction, so a plain import must succeed here,
-# not just at container runtime. RDUTensor.dtype confirms
-# patches/software-repo/coe_api_rdutensor_dtype.patch was applied.
+# not just at container runtime. RDUTensor.dtype confirms the pinned
+# software-repo commit (config/versions.env's SOFTWARE_REPO_*) has it.
 $PY -c "
 import rdu_engine
 assert hasattr(rdu_engine, 'Checkpoint'), 'rdu_engine.Checkpoint missing'
 assert hasattr(rdu_engine, 'PEF'), 'rdu_engine.PEF missing'
-assert hasattr(rdu_engine.RDUTensor, 'dtype'), 'RDUTensor.dtype missing -- coe_api_rdutensor_dtype.patch not applied?'
+assert hasattr(rdu_engine.RDUTensor, 'dtype'), 'RDUTensor.dtype missing -- check config/versions.env SOFTWARE_REPO_COMMIT'
 import coe_api
 assert hasattr(coe_api.RDUTensor, 'dtype'), 'coe_api.RDUTensor.dtype missing'
 print('rdu_engine/coe_api: OK (RDUTensor.dtype present)')

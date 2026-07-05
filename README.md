@@ -233,7 +233,7 @@ ever deployed somewhere without that auto-mount convention (e.g. a future k8s de
 
 ## Known gaps
 
-`patches/` is split by which side each override applies to — `patches/gpu/` (used by `Dockerfile.gpu`) and `patches/rdu/` (used by `scripts/build_rdu_env.sh`). Both a full-file overlay (`.py`, copied wholesale) and a unified diff (`.patch`, applied via `patch -p1`) can appear on either side; the extension tells you which.
+`patches/` is split by which side each override applies to — `patches/gpu/` (used by `Dockerfile.gpu`) and `patches/rdu/` (used by `scripts/build_rdu_env.sh`). Both a full-file overlay (`.py`, copied wholesale) and a unified diff (`.patch`, applied via `patch -p1`) can appear on either side; the extension tells you which. These exist here, rather than as commits on a branch, only because vllm and ai-dynamo are third-party packages this repo doesn't control a fork of — for internal repos we do control (like `SambaNova/software`, see `config/versions.env`'s `SOFTWARE_REPO_*`), changes are pushed as a real branch/commit and pinned directly, not carried as a local patch file.
 
 GPU side (`Dockerfile.gpu`, `patches/gpu/`):
 - **vllm nixl_connector patch**: `REGISTER_CONSUMER_MSG` not in stock vllm 0.16.0 — fixed by overlaying `patches/gpu/nixl_connector.py`, sourced from `sambanova/sn_vllm`.
