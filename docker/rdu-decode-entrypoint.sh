@@ -13,8 +13,8 @@
 #     in — BAR2_INSTALL/BAR2_RUNTIME_LIBS/BAR2_PRELOAD must be passed in as
 #     env vars pointing at NFS paths visible inside the container
 #     (docker-run-wrapper auto-mounts /import and /scratch at identical
-#     host paths on RDU nodes; a k8s pod spec needs an explicit hostPath
-#     volume for the same paths — see Phase 5 k8s manifests). Cluster
+#     host paths on RDU nodes; a k8s pod spec would need an explicit
+#     hostPath volume for the same paths instead). Cluster
 #     topology (CONTROL_PLANE_IP, GPU_ROCE_IP, ...) and model config
 #     (MODEL, PEF, ...) are passed in as env vars too, not baked in, since
 #     both vary independently of the image build.
@@ -48,8 +48,8 @@ done
 # /dev/rdu and /dev/rdu_mem_map are NOT provided by docker-run-wrapper's
 # automatic /import,/scratch NFS mounting (that only covers filesystem
 # paths, not device nodes) — they must be passed explicitly, e.g.
-# `--device /dev/rdu --device /dev/rdu_mem_map` (docker) or via the k8s
-# device plugin (sambanova.ai/rdu-tile, see Phase 5 k8s manifests). Both
+# `--device /dev/rdu --device /dev/rdu_mem_map` (docker) or via a k8s
+# device plugin (sambanova.ai/rdu-tile) in a k8s deployment. Both
 # are world-writable (crw-rw-rw-) on this cluster, confirmed via direct
 # inspection, so no privileged mode is needed — just explicit passthrough.
 # Fail with a clear message here rather than the cryptic native

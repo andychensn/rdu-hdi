@@ -19,8 +19,8 @@
 # PYTHONPATH/LD_LIBRARY_PATH/LD_PRELOAD. docker-run-wrapper on RDU nodes
 # auto-mounts /import and /scratch at identical host paths (confirmed this
 # session via the BAR2 self-build container work), so no explicit -v mount
-# is needed there; a k8s pod spec needs an explicit hostPath volume
-# instead (see Phase 5 k8s manifests).
+# is needed there; a k8s pod spec would need an explicit hostPath volume
+# instead.
 #
 # RUN this image with --net=host (RoCE IP visibility, matching
 # gpu_prefill.sh's own --net=host requirement) and explicit device
@@ -31,9 +31,8 @@
 # accessible on this cluster (confirmed via direct inspection), so
 # `--device /dev/rdu --device /dev/rdu_mem_map --device /dev/infiniband`
 # needs no privileged mode — same RDMA-device pattern gpu_prefill.sh
-# already uses. A k8s pod spec uses the sambanova.ai/rdu-tile device
-# plugin for /dev/rdu*, plus a hostPath volume for /dev/infiniband (see
-# Phase 5 k8s manifests).
+# already uses. A k8s deployment would use the sambanova.ai/rdu-tile
+# device plugin for /dev/rdu*, plus a hostPath volume for /dev/infiniband.
 #
 # Build (from the login node — the FROM base image brings /opt/sambanova
 # along, same principle as Dockerfile.gpu bringing CUDA along via FROM

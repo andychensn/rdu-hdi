@@ -141,8 +141,11 @@ Then run via `docker-run-wrapper` (see `scripts/test_docker_rdu_e2e.sh` for a fu
 the RDU-decode container's required flags — `--net=host`, `--device /dev/rdu --device
 /dev/rdu_mem_map --device /dev/infiniband`, `--ulimit memlock=-1 --cap-add IPC_LOCK`, and the
 `BAR2_INSTALL`/`BAR2_RUNTIME_LIBS`/`BAR2_PRELOAD`/`MODEL`/`PEF`/... env vars from
-`config/cluster.env` + `config/model.env`). A Kubernetes deployment design (not yet validated
-against a live cluster) lives under `k8s/` — see `k8s/README.md`.
+`config/cluster.env` + `config/model.env`). No Kubernetes deployment exists yet — this project runs
+directly on bare SLURM/`snrdu` nodes; a k8s design would need a device plugin for `/dev/rdu*`
+(`sambanova.ai/rdu-tile`) plus `hostNetwork: true` + hostPath `/dev/infiniband` + `IPC_LOCK` for the
+same RDMA reasons the Docker flags above need them, same as `gpu_prefill.sh`'s existing Docker
+invocation.
 
 ## Benchmark
 
