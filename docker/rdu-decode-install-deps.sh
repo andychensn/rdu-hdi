@@ -11,10 +11,10 @@
 #     instead, since they're pure binary artifacts already validated on
 #     this node family.
 #   - operate on the base image's system python, not a nested venv.
-#   - NOT touch coe_api/rdu_engine or the BAR2 runtime libs at all — those
-#     come from NFS paths mounted into the container at runtime (see
-#     docker/rdu-decode-entrypoint.sh), per the project decision to defer
-#     full BAR2 self-build (docs/local/DOCKERIZE_BAR2_PLAN.md).
+#   - self-build and install coe_api/rdu_engine as wheels directly (see the
+#     "coe_api/rdu_engine" section below and scripts/build_bar2.sh) — no NFS
+#     mount involved; the BAR2 runtime connector libs are COPYed into the
+#     image separately by Dockerfile.rdu (rdu-runtime-install/{lib,preload}).
 #
 # Run inside the Dockerfile.rdu build (working dir: repo root, with
 # wheelhouse/, rdu-ucx-install/, patches/rdu/, fast-coe/ all present).

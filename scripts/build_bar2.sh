@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# DEFERRED (2026-07-04) -- NOT the active build path. Both candidate self-build branches
-# (josephp/nova/scattergather_integration, guoyaof/ddr-rdma-direct) hit hard
-# ABI/hardware-compatibility blockers; the project reverted to the original NFS paths for
-# BAR2_INSTALL/BAR2_RUNTIME_LIBS/BAR2_PRELOAD (see config/cluster.env, config/versions.env's
-# SOFTWARE_REPO_* comment). Kept as a working starting point if self-build is revisited later.
+# ACTIVE build path (resolved 2026-07-05) -- produces the wheels under
+# wheelhouse/ and the libs under rdu-runtime-install/ that
+# docker/rdu-decode-install-deps.sh and Dockerfile.rdu bake into the RDU
+# decode image. Two earlier candidate branches (josephp/nova/scattergather_integration,
+# guoyaof/ddr-rdma-direct) hit hard ABI/hardware-compatibility blockers and were
+# abandoned before the real branch was identified -- see config/versions.env's
+# SOFTWARE_REPO_* comment for the full history.
 #
 # Build coe_api/rdu_engine (Python wheel) and the runtime connector libs
 # (libc_samba_runtime.so/libcpp_samba_runtime.so) from a pinned commit of
