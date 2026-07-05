@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# DEFERRED (2026-07-04) -- verifies scripts/build_bar2.sh's self-built wheel/runtime-install
+# output, which is not the active build path (self-build abandoned, see build_bar2.sh's header).
 REPO_ROOT=/import/snvm-sc-scratch1/andyc/rdu-hdi
 LD_LIBRARY_PATH="$REPO_ROOT/rdu-runtime-install/lib:${LD_LIBRARY_PATH:-}" \
     "$REPO_ROOT/.venv_rdu/bin/python" -c "

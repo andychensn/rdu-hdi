@@ -14,13 +14,22 @@ vllm/vllm-openai (Docker image)  ─────────  GPU prefill worker
   + vllm nixl_connector patch                │
   + ai-dynamo (base package only)            │
                                              │
-sambanova/fast-coe's vllm-rdu (NFS venv) ──  RDU decode worker
-  + andychensn/ucx + andychensn/nixl         │   (hdi's proven connector/engine,
-    (repo-built, rdu-ucx-install/)           │    not the retired standalone
-  + ai-dynamo (base package only)            │    andychensn/vllm-rdu fork)
+sambanova/fast-coe's vllm-rdu             ──  RDU decode worker
+  (Docker image, Dockerfile.rdu, or         │   (hdi's proven connector/engine,
+   NFS venv via build_rdu_env.sh)           │    not the retired standalone
+  + andychensn/ucx + andychensn/nixl         │    andychensn/vllm-rdu fork)
+    (repo-built, rdu-ucx-install/)          │
+  + ai-dynamo (base package only)            │
                                              │
-etcd + NATS + dynamo.frontend   ──────────  Control plane (login node)
+etcd + NATS + dynamo.frontend             ──  Control plane
+  (Docker image, Dockerfile.control-plane,   │   (login node, or containerized)
+   or venv via control_plane.sh)             │
 ```
+
+coe_api/BAR2 runtime connector libs are **not** self-built or baked into the RDU Docker image — a
+self-build attempt hit a hard ABI/hardware-compatibility blocker (see `config/versions.env`'s
+`SOFTWARE_REPO_*` comment); `BAR2_INSTALL`/`BAR2_RUNTIME_LIBS`/`BAR2_PRELOAD` remain NFS paths,
+supplied at container runtime the same way `launch/rdu_decode.sh` already does on bare metal.
 
 Both sides install plain `ai-dynamo`/`ai-dynamo-runtime`, never the `[vllm]` extra — that extra
 pulls in vllm 0.20.x as a dependency, which breaks MiniMax-M2.7 (both sides pin vllm 0.16.0
@@ -118,6 +127,23 @@ curl -s http://localhost:18000/v1/completions \
 
 > Do not start RDU decode before GPU prefill — Dynamo builds the wrong pipeline.
 
+### Docker-based launch (control plane + RDU decode)
+
+Control plane and RDU decode can also run as Docker containers instead of the venv-based launch
+above (GPU prefill is always Docker — see `launch/gpu_prefill.sh`). Build once:
+
+```bash
+bash scripts/build_docker_control_plane.sh   # -> $CONTROL_PLANE_IMAGE (config/cluster.env)
+bash scripts/build_docker_rdu.sh             # -> $RDU_IMAGE (config/cluster.env)
+```
+
+Then run via `docker-run-wrapper` (see `scripts/test_docker_rdu_e2e.sh` for a full worked example of
+the RDU-decode container's required flags — `--net=host`, `--device /dev/rdu --device
+/dev/rdu_mem_map --device /dev/infiniband`, `--ulimit memlock=-1 --cap-add IPC_LOCK`, and the
+`BAR2_INSTALL`/`BAR2_RUNTIME_LIBS`/`BAR2_PRELOAD`/`MODEL`/`PEF`/... env vars from
+`config/cluster.env` + `config/model.env`). A Kubernetes deployment design (not yet validated
+against a live cluster) lives under `k8s/` — see `k8s/README.md`.
+
 ## Benchmark
 
 ```bash
@@ -137,15 +163,18 @@ scancel $(squeue -u $USER -h -o '%i')
 
 ## Docker
 
-Two wrappers on the cluster:
+Three wrappers on the cluster:
 
 | Wrapper | Where | Supports |
 |---------|-------|---------|
-| `/usr/bin/docker-wrapper` | Login node | build, push, pull, ps, … |
-| `/usr/bin/cuda-docker-run-wrapper` | GPU nodes | run (GPU passthrough + `/import` mount) |
+| `/usr/bin/docker-wrapper` | Login node | build, push, pull, ps, … (not `run`) |
+| `/usr/bin/cuda-docker-run-wrapper` | GPU nodes | run only (GPU passthrough + `/import`,`/scratch` auto-mount) |
+| `/usr/bin/docker-run-wrapper` | RDU nodes | run only (`/import`,`/scratch` auto-mount; device passthrough and RDMA still need explicit flags — see `scripts/test_docker_rdu_e2e.sh`) |
 
-Both require `sudo -g docker`. Internal registry: `sc-artifacts2.sambanovasystems.com/sw-docker-scratch/`.
-`--net=host` required when running on GPU nodes (for RoCE RDMA).
+All three require `sudo -g docker` (via `sudo -g docker /usr/bin/<wrapper>`). Internal registry:
+`sc-artifacts2.sambanovasystems.com/sw-docker-scratch/`. `--net=host` required on both GPU and RDU
+nodes (for RoCE RDMA). Containers run as non-root — default any writable-path config to `/tmp/...`
+unless proven otherwise.
 
 ---
 
@@ -180,3 +209,20 @@ Docker works. Key non-obvious fixes required:
 2. **Broadcom OOT `libbnxt_re`**: Ubuntu's inbox `libbnxt_re-rdmav34.so` sends wrong UVERBS attributes to the host's Broadcom OOT bnxt_re kernel driver (237.1.137.0), causing `EINVAL`. Fixed by building from source: `/import/it-tools/idc/fw/brcm/237/bcm_237.1.148.0a/drivers_linux/bnxt_rocelib/libbnxt_re-237.1.137.0.tar.gz` (shipped with `rc-compat/v39` for Ubuntu 22.04 compatibility).
 
 3. **`--pull=always`**: Without this, GPU nodes use a stale cached image and don't get Dockerfile updates.
+
+## Docker RDU decode — notes
+
+Docker works (`Dockerfile.rdu`, `docker/rdu-decode-entrypoint.sh`). Key non-obvious fix required:
+
+1. **SambaNova's `bnxt_re` RDMA provider replacement**: RDU nodes (confirmed on `sc3-s339`)
+   deliberately disable the stock rdma-core `bnxt_re` userspace provider (renamed `.orig`) in favor
+   of a SambaNova-supplied one at `/opt/sambanova/lib/libbnxt_re-rdmav34.so` — a different bug than
+   the GPU side's Broadcom OOT issue above, but the same symptom class (`UCX ERROR no usable
+   transports/devices`). `rhel810-dev` (this image's base) doesn't ship the replacement, so it's
+   vendored directly into the repo (`vendor/bnxt_re/`) and swapped in during the Dockerfile build —
+   see `Dockerfile.rdu`'s comments for the exact mechanism. Package-version matching alone
+   (`rdma-core-48.0` present in both bare metal and container) does not catch this; it's a
+   file-level swap, not a package-level one.
+2. Does **not** bake in `coe_api`/BAR2 runtime connector libs — `BAR2_INSTALL`/`BAR2_RUNTIME_LIBS`/
+   `BAR2_PRELOAD` are supplied at container runtime from their existing NFS paths (self-build
+   deferred, see the architecture note above and `config/versions.env`).

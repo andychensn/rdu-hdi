@@ -50,10 +50,12 @@ RUN dnf install -y git patch rdma-core libibverbs libibverbs-utils && dnf clean 
 # which on this cluster's hardware sends usable-transport-breaking ioctls
 # (confirmed by direct bare-metal comparison on sc3-s339: the stock
 # libbnxt_re-rdmav34.so there is deliberately disabled -- renamed .orig --
-# in favor of this one via /opt/sambanova/share/sambanova-deps-brcm-roce-userland/libbnxt_re.sh).
+# in favor of SambaNova's own copy at /opt/sambanova/lib/libbnxt_re-rdmav34.so,
+# installed via /opt/sambanova/share/sambanova-deps-brcm-roce-userland/libbnxt_re.sh).
 # Without it, UCX reports "no usable transports/devices" for bnxt_re0/2/4/6.
-# rhel810-dev's base /opt/sambanova does not ship this package, so it's
-# vendored directly (vendor/bnxt_re/, pulled from bare metal).
+# rhel810-dev's base /opt/sambanova does not ship this package, so the
+# library itself (not the install script) is vendored directly below
+# (vendor/bnxt_re/, pulled from bare metal's /opt/sambanova/lib/).
 COPY vendor/bnxt_re/libbnxt_re-rdmav34.so /tmp/libbnxt_re-rdmav34.so
 COPY vendor/bnxt_re/bnxt_re.driver /tmp/bnxt_re.driver
 RUN bash -c ' \
