@@ -89,20 +89,6 @@ fetch_sources() {
         done
     fi
 
-    # coe_api compat: not every coe_api build exposes RDUTensor.dtype, so
-    # fast-coe's pipeline.py should prefer Checkpoint.get_symbol_properties
-    # (name).dtype (always present, metadata-only — no hardware copy, unlike
-    # RDUTensor.to_torch_tensor()) and fall back to the direct attribute only
-    # for coe_api builds that have it. See scripts/build_bar2.sh.
-    PEF_DTYPE_PATCH="$REPO_ROOT/patches/rdu/fast_coe_pef_dtype_symbol_properties.patch"
-    if grep -q "get_symbol_properties(symbol_name).dtype" "$FAST_COE_SRC/server/rdu_manifest/pipeline.py" 2>/dev/null; then
-        echo "  pipeline.py: pef_dtype symbol_properties fallback already present ✅"
-    elif [ -f "$PEF_DTYPE_PATCH" ]; then
-        (cd "$FAST_COE_SRC" && git apply "$PEF_DTYPE_PATCH") && \
-            echo "  fast_coe_pef_dtype_symbol_properties.patch applied ✅" || \
-            echo "WARNING: pef_dtype patch failed — init_decode_state will crash against coe_api builds lacking RDUTensor.dtype"
-    fi
-
     # ── vllm source + torch 2.2.x compat patches ──────────────────────────────
     # PyPI vllm 0.16.0 targets torch 2.9.x and uses APIs unavailable in torch
     # 2.2.0+sn: _symmetric_memory, _unregister_process_group, custom_graph_pass,
