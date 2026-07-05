@@ -5,10 +5,9 @@
 # pre-built binary artifacts from wheelhouse/ and rdu-ucx-install/), AND
 # coe_api/rdu_engine + the BAR2 runtime connector libs (self-built, see
 # scripts/build_bar2.sh) from wheelhouse/ and rdu-runtime-install/{lib,preload}.
-# No NFS mount is needed at runtime for any of it (the model checkpoint and
-# PEF still are, since those are large data files this image doesn't and
-# shouldn't embed). The bare-metal launch/rdu_decode.sh path is deprecated
-# in favor of this image (see that file's own header).
+# The model checkpoint and PEF are read from NFS at container runtime
+# (large data files this image doesn't embed) — everything else is
+# self-contained.
 #
 # RUN this image with --net=host (RoCE IP visibility, matching
 # gpu_prefill.sh's own --net=host requirement) and explicit device

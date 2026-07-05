@@ -281,10 +281,10 @@ build_runtime_graph_libs() {
 # LD_LIBRARY_PATH, so just adding our build to LD_LIBRARY_PATH is NOT enough
 # to make it win. libNovaRuntime dlopen()s the UNVERSIONED name
 # "libc_samba_runtime.so" (not the "libc_samba_runtime.so.4.13" this build
-# actually produces), so the fix (same one hdi's own start_vllm_rdu_decode.sh
-# uses) is: copy the .4.13 file, patch its own DT_SONAME to the unversioned
-# name via patchelf, and force-load it via LD_PRELOAD -- LD_PRELOAD's own
-# explicit unversioned name then wins the dlopen() regardless of RPATH.
+# actually produces), so the fix is: copy the .4.13 file, patch its own
+# DT_SONAME to the unversioned name via patchelf, and force-load it via
+# LD_PRELOAD -- LD_PRELOAD's own explicit unversioned name then wins the
+# dlopen() regardless of RPATH.
 build_preload_libs() {
     echo "=== Building LD_PRELOAD copies (SONAME-patched) $(date) ==="
     which patchelf >/dev/null 2>&1 || { echo "ERROR: patchelf not found (pip install --user patchelf, or dnf install patchelf)"; exit 1; }

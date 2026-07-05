@@ -76,10 +76,8 @@ fi
 BENCH_SCRIPT="$INFERENCEX_DIR/utils/bench_serving/benchmark_serving.py"
 BENCH_DIR="$INFERENCEX_DIR/utils/bench_serving"
 
-# ── Python env for benchmarking (self-contained — do NOT depend on the
-# deprecated bare-metal control-plane venv; that venv only ever existed as a
-# side effect of launch/control_plane.sh, which nothing creates anymore now
-# that the control plane is Docker-only) ────────────────────────────────────
+# ── Python env for benchmarking (self-contained, not shared with any other
+# component's venv) ─────────────────────────────────────────────────────────
 VENV="$REPO_ROOT/.venv_bench"
 if [ ! -d "$VENV" ]; then
     echo "Creating benchmark venv ($VENV)..."

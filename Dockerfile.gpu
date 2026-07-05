@@ -5,10 +5,10 @@
 #   - UCX (andychensn/ucx) — bnxt_re RoCE RDMA support; branch/commit pinned
 #     in config/versions.env, NOT hardcoded here (see ARGs below)
 #   - NIXL (andychensn/nixl) — KV cache transfer library; same pinning rule
-#   - patches/gpu/nixl_connector.py overlay — verbatim copy of hdi's proven
-#     gpu_vllm_fork producer file (REGISTER_CONSUMER_MSG handshake + more).
-#     A verbatim copy, not a reconstructed patch, so it can't silently
-#     diverge from what hdi actually runs.
+#   - patches/gpu/nixl_connector.py overlay — replaces vllm's stock
+#     nixl_connector.py wholesale, adding REGISTER_CONSUMER_MSG handshake
+#     support so the GPU prefill producer can coordinate KV transfer with
+#     the RDU decode consumer
 #   - ai-dynamo — dynamo.vllm + dynamo.frontend Python modules (no [vllm] extra: that upgrades vllm to 0.20.x)
 #
 # Build (from login node sc-vnc9):
@@ -109,9 +109,8 @@ RUN NIXL_WHL=$(ls /tmp/nixl-wheels/nixl_cu12-*.whl | head -1) && \
 ARG DYNAMO_VERSION
 RUN pip install "ai-dynamo==${DYNAMO_VERSION}" "ai-dynamo-runtime==${DYNAMO_VERSION}"
 
-# Overlay hdi's exact producer nixl_connector.py (verbatim copy from
-# gpu_vllm_fork, md5 5cd6b474372f1d8490e380a82d1fd226 — the file hdi actually
-# runs, including REGISTER_CONSUMER_MSG handshake support).
+# Overlay nixl_connector.py with REGISTER_CONSUMER_MSG handshake support
+# (md5 5cd6b474372f1d8490e380a82d1fd226).
 COPY patches/gpu/nixl_connector.py /tmp/nixl_connector.py
 RUN VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__))") && \
     NIXL_CONN=$(find "$VLLM_DIR" -path "*kv_connector/v1/nixl_connector.py" 2>/dev/null | head -1) && \

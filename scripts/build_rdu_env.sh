@@ -21,7 +21,7 @@
 #       -- bash scripts/build_rdu_env.sh --build-only
 #
 # Outputs:
-#   $REPO_ROOT/fast-coe/          — hdi's proven vllm-rdu source, pinned by commit
+#   $REPO_ROOT/fast-coe/          — vllm-rdu source, pinned by commit
 #   $REPO_ROOT/rdu-ucx-install/   — UCX (CPU-only, bnxt_re verbs, no CUDA)
 #   $REPO_ROOT/wheelhouse/        — vllm+cpu, nixl, ai-dynamo(-runtime), and all
 #                                   transitive-dep wheels
@@ -57,13 +57,12 @@ fetch_sources() {
     echo "=== Phase 1: Fetching sources and wheels (login node, needs internet) ==="
     mkdir -p "$SRC_DIR" "$WHEELHOUSE"
 
-    # ── fast-coe (hdi's proven vllm-rdu source) ───────────────────────────────
-    # server/vllm-rdu is the RDU decode connector/engine code hdi actually runs
+    # ── fast-coe (vllm-rdu source) ────────────────────────────────────────────
+    # server/vllm-rdu is the RDU decode connector/engine code
     # (rdu_hardware/connector_override.py: 4 independent per-NIC NIXL agents,
-    # BAR2/DDR slab cache, cache-aware routing) — a different, working lineage
-    # from the diverged andychensn/vllm-rdu fork this repo used to install.
-    # This is a PYTHONPATH/editable-install source tree, not a wheel — read
-    # directly off NFS at build+run time, no separate build step needed.
+    # BAR2/DDR slab cache, cache-aware routing). This is a PYTHONPATH/
+    # editable-install source tree, not a wheel — read directly off NFS at
+    # build+run time, no separate build step needed.
     if [ -d "$FAST_COE_SRC/.git" ]; then
         CURRENT=$(git -C "$FAST_COE_SRC" rev-parse HEAD)
         if [ "$CURRENT" = "$FAST_COE_COMMIT" ]; then
@@ -728,8 +727,7 @@ build_venv() {
     # NOTE: no REGISTER_CONSUMER_MSG patch for chunk-overlap KV transfer
     # (VLLM_PD_CHUNK_OVERLAP=1) is applied here — launch/rdu_decode.sh and
     # launch/gpu_prefill.sh both hardcode VLLM_PD_CHUNK_OVERLAP=0, so the
-    # feature isn't used. If this feature is ever revived, use hdi's actual
-    # consumer-side implementation rather than hand-reconstructing one.
+    # feature isn't used.
 
     # nixl_connector.py (stock vLLM, not vllm-rdu): _pop_done_transfers treats a
     # telemetry-retrieval failure as a transfer failure, even when
@@ -881,7 +879,7 @@ PYEOF
         echo "  aliased $(basename "$NIXL_PKG_DIR") -> nixl (vllm imports 'nixl', not the CUDA-suffixed name)"
     fi
 
-    # ── vllm-rdu plugin (fast-coe's, pinned — hdi's exact proven connector/engine) ─
+    # ── vllm-rdu plugin (fast-coe's, pinned commit) ───────────────────────────
     echo "=== vllm-rdu (fast-coe @ $FAST_COE_COMMIT, editable install) ==="
     [ -d "$FAST_COE_SRC/server/vllm-rdu" ] || { echo "ERROR: $FAST_COE_SRC/server/vllm-rdu not found — run --fetch-only first"; exit 1; }
     pip install -q -e "$FAST_COE_SRC/server/vllm-rdu"

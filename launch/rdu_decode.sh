@@ -84,9 +84,8 @@ if [[ "${1:-}" == "--inner" ]]; then
     }
     # fast-coe's config schema (server/rdu_manifest/model_registry.py's
     # Expert.from_config) embeds pef/checkpoint paths directly in the YAML
-    # (pefs:/checkpoints: maps referenced by name from experts:), unlike the
-    # old (retired) flat RduConfig schema — no runtime YAML generation needed,
-    # pass config/minimax_m2.yaml straight through.
+    # (pefs:/checkpoints: maps referenced by name from experts:) — no runtime
+    # YAML generation needed, pass config/minimax_m2.yaml straight through.
     [ -n "$RDU_CONFIG" ] && echo "  rdu_config: $RDU_CONFIG (fast-coe schema, used as-is)"
 
     PYTHONNOUSERSITE=1 \

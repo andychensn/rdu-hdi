@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Standard 9-config sweep (ISL 1k/10k/100k x concurrency 1/2/4) used for every
-# rdu-hdi-vs-hdi comparison in this project. Parameterized so the same script
-# runs against either stack -- just point --endpoint/--model/--label at the
-# target. See benchmark_results/FINAL_COMPARISON_20260705.md for the last
-# reference run of both.
+# Standard 9-config sweep (ISL 1k/10k/100k x concurrency 1/2/4). Parameterized
+# so the same script can target any endpoint/model/result-dir -- point
+# --endpoint/--model/--label at whichever stack you want to measure.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
