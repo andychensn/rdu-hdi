@@ -30,6 +30,24 @@ All external dependencies are pinned to exact commit SHAs in `config/versions.en
 
 ---
 
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/fetch_vendor.sh` | Fetch etcd + nats-server binaries |
+| `scripts/build_rdu_env.sh` | Fetch/build fast-coe, UCX, NIXL, and the vllm+cpu wheel (RDU side) |
+| `scripts/build_bar2.sh` | Self-build coe_api/rdu_engine + the BAR2 runtime connector libs |
+| `scripts/build_docker_gpu.sh` | Build + push the GPU prefill Docker image |
+| `scripts/build_docker_control_plane.sh` | Build + push the control-plane Docker image |
+| `scripts/build_docker_rdu.sh` | Build + push the RDU decode Docker image |
+| `launch/gpu_prefill.sh` | Launch the GPU prefill worker |
+| `scripts/_run_docker_rdu_decode.sh` | Launch the RDU decode worker (invoked via `snrdu`) |
+| `scripts/benchmark.sh` | Run one benchmark config |
+| `scripts/_run_benchmark_sweep.sh` | Run the standard 9-config benchmark sweep |
+| `scripts/test_docker_rdu_e2e.sh` | End-to-end smoke test of the RDU decode image |
+
+---
+
 ## Configuration
 
 Two config files to edit before use:
@@ -161,18 +179,6 @@ Results saved to `benchmark_results/` (gitignored). To run the standard 9-config
 
 ```bash
 bash scripts/_run_benchmark_sweep.sh --label my_run [--endpoint http://HOST:PORT] [--model NAME]
-```
-
-## Troubleshooting
-
-If RDU decode fails to acquire tiles (`Resource Allocation failed: No Tile(s) Available`), a
-stale process from a previous run may still be holding `/dev/rdu*`. Check via `snrdu` on the RDU
-node:
-
-```bash
-snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
-    --allow-local-lib-python --reservation "$RDU_RESERVATION" --pef "$PEF" --timeout 00:05:00 \
-    -- bash scripts/_check_rdu_fd_holders.sh
 ```
 
 ## Teardown
