@@ -40,5 +40,4 @@ echo "Starting Dynamo frontend on 0.0.0.0:$VLLM_PORT..."
 exec env \
     ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \
     NATS_SERVER="nats://$CONTROL_PLANE_IP:$NATS_PORT" \
-    DYN_REQUEST_PLANE=tcp \
     python3 -m dynamo.frontend --http-port "$VLLM_PORT"

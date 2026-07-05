@@ -41,13 +41,8 @@ if [[ "${1:-}" == "--inner" ]]; then
         $RDMA_DEVICES \
         -e "ETCD_ENDPOINTS=http://$CONTROL_PLANE_IP:$ETCD_PORT" \
         -e "NATS_SERVER=nats://$CONTROL_PLANE_IP:$NATS_PORT" \
-        -e "DYN_REQUEST_PLANE=tcp" \
         -e "VLLM_NIXL_SIDE_CHANNEL_HOST=$LOCAL_IP" \
-        -e "VLLM_NIXL_SIDE_CHANNEL_PORT=5600" \
-        -e "VLLM_PD_CHUNK_OVERLAP=0" \
-        -e "VLLM_PD_STAGE_TIMING=0" \
         -e "VLLM_USE_DEEP_GEMM=0" \
-        -e "VLLM_USE_FLASHINFER_MOE_FP8=0" \
         -e "NCCL_IB_DISABLE=1" \
         -e "NCCL_P2P_LEVEL=NVL" \
         --shm-size=1g \

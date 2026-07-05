@@ -80,17 +80,24 @@ RDU_CONFIG="$MODEL_CONFIG"
 }
 [ -n "$RDU_CONFIG" ] && echo "  rdu_config: $RDU_CONFIG (fast-coe schema, used as-is)"
 
+# UCX_RCACHE_MAX_UNRELEASED=1024 below looks redundant with vllm's own
+# nixl_connector.py, which auto-sets it to "1024" if unset -- but only if
+# nixl hasn't been imported yet when that code runs. GPU prefill (which
+# does NOT set this var explicitly) hits exactly that failure: its logs
+# (logs/*_gpu_prefill.log) show "NIXL was already imported, we can't reset
+# UCX_RCACHE_MAX_UNRELEASED. Please set it to '1024' manually." RDU decode
+# never logs that warning, precisely because setting it explicitly here
+# makes vllm's own `if "UCX_RCACHE_MAX_UNRELEASED" not in os.environ` check
+# short-circuit before it ever needs to auto-set anything. Do not remove
+# this as "redundant with upstream default" without re-verifying that
+# warning doesn't start appearing in RDU decode's own logs too.
 exec env \
     PYTHONNOUSERSITE=1 \
     ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \
     NATS_SERVER="nats://$CONTROL_PLANE_IP:$NATS_PORT" \
-    DYN_REQUEST_PLANE=tcp \
     HF_HUB_OFFLINE=1 \
     VLLM_NIXL_SIDE_CHANNEL_HOST="$RDU_ROCE_IP_LOCAL" \
-    VLLM_NIXL_SIDE_CHANNEL_PORT=5600 \
     RDU_ENABLED=1 \
-    VLLM_PD_CHUNK_OVERLAP=0 \
-    VLLM_PD_PRODUCER_CHUNK_OVERLAP=0 \
     VLLM_PD_PRODUCER_HOST="$GPU_ROCE_IP" \
     VLLM_PD_PRODUCER_PORT=5600 \
     SN_REMOTE_KV_MEMTYPE=VRAM \
@@ -101,18 +108,12 @@ exec env \
     UCX_TLS=rc \
     UCX_NET_DEVICES="${UCX_NET_DEVICES:-bnxt_re0:1,bnxt_re2:1,bnxt_re4:1,bnxt_re6:1}" \
     UCX_MAX_RNDV_RAILS=4 \
-    UCX_MAX_RMA_RAILS=1 \
     UCX_MULTI_LANE_MAX_RATIO=100 \
     UCX_IB_PREFER_NEAREST_DEVICE=n \
     UCX_IB_ROCE_REACHABILITY_MODE=all \
     UCX_RC_VERBS_MAX_RD_ATOMIC=16 \
     UCX_RC_VERBS_TIMEOUT=20000us \
-    UCX_RC_VERBS_TX_QUEUE_LEN=256 \
-    UCX_RC_VERBS_RX_QUEUE_LEN=4095 \
-    UCX_RC_VERBS_RETRY_COUNT=7 \
-    UCX_RC_VERBS_RNR_RETRY_COUNT=7 \
     UCX_RCACHE_MAX_UNRELEASED=1024 \
-    UCX_LOG_LEVEL=WARN \
     UCX_MODULE_DIR="$_UCX_MOD" \
     NIXL_PLUGIN_DIR="$_NIXL_PLUGIN_DIR" \
     INFERENCE_MODE=local_queue \
