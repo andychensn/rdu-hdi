@@ -156,7 +156,24 @@ curl -s http://localhost:18000/v1/completions \
 bash scripts/benchmark.sh --input-len 1000 --output-len 1000 --concurrency 1
 ```
 
-Results saved to `benchmark_results/` (gitignored).
+Results saved to `benchmark_results/` (gitignored). To run the standard 9-config sweep (ISL
+1k/10k/100k × concurrency 1/2/4) against a given endpoint in one shot:
+
+```bash
+bash scripts/_run_benchmark_sweep.sh --label my_run [--endpoint http://HOST:PORT] [--model NAME]
+```
+
+## Troubleshooting
+
+If RDU decode fails to acquire tiles (`Resource Allocation failed: No Tile(s) Available`), a
+stale process from a previous run may still be holding `/dev/rdu*`. Check via `snrdu` on the RDU
+node:
+
+```bash
+snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
+    --allow-local-lib-python --reservation "$RDU_RESERVATION" --pef "$PEF" --timeout 00:05:00 \
+    -- bash scripts/_check_rdu_fd_holders.sh
+```
 
 ## Teardown
 
