@@ -191,6 +191,15 @@ $PIP install -q -e "$FAST_COE_SRC/server/vllm-rdu"
 echo "=== av (fast-coe's rdu_manifest.vlm_pipeline, imported unconditionally) ==="
 install_whl "av-*.whl"
 
+echo "=== coe_api/rdu_engine (self-built, from wheelhouse/) ==="
+RDU_ENGINE_WHL=$(find "$WHEELHOUSE" -name "sambanova_rdu_engine_api-*.whl" 2>/dev/null | head -1)
+COE_API_WHL=$(find "$WHEELHOUSE" -name "sambanova_coe_api-*.whl" 2>/dev/null | head -1)
+[ -n "$RDU_ENGINE_WHL" ] || { echo "ERROR: no sambanova_rdu_engine_api wheel in wheelhouse (run scripts/build_bar2.sh first)"; exit 1; }
+[ -n "$COE_API_WHL" ] || { echo "ERROR: no sambanova_coe_api wheel in wheelhouse (run scripts/build_bar2.sh first)"; exit 1; }
+$PIP install -q --no-deps --force-reinstall --no-cache-dir "$RDU_ENGINE_WHL"
+$PIP install -q --no-deps --force-reinstall --no-cache-dir "$COE_API_WHL"
+echo "  installed: $(basename "$RDU_ENGINE_WHL"), $(basename "$COE_API_WHL")"
+
 echo "=== Extra transitive deps (discovered by exercising the full entrypoint import chain) ==="
 for pkg in \
     openai_harmony  docstring_parser  durationpy  email_validator \
@@ -245,13 +254,23 @@ $PY -c "import numpy; print(f'numpy: {numpy.__version__}')"
 LD_LIBRARY_PATH="$RDU_UCX_LIB:${LD_LIBRARY_PATH:-}" $PY -c "import nixl; print('nixl: OK')"
 $PY -c "import av; print(f'av: {av.__version__}')"
 $PY -c "from dynamo.vllm.main import main; print('dynamo.vllm.main: OK')"
-# rdu_hardware itself is expected to warn here — BAR2_INSTALL/coe_api is
-# only mounted at container runtime, not build time (see
-# docker/rdu-decode-entrypoint.sh). This is the same expected warning
-# scripts/build_rdu_env.sh's own validation tolerates.
+
+# coe_api/rdu_engine are now baked in (self-built, not NFS-mounted) --
+# LD_LIBRARY_PATH already includes /opt/bar2-runtime/lib via this
+# Dockerfile's own ENV instruction, so a plain import must succeed here,
+# not just at container runtime. RDUTensor.dtype confirms jayr's local
+# patch (patches/software-repo/coe_api_rdutensor_dtype.patch) took effect.
+$PY -c "
+import rdu_engine
+assert hasattr(rdu_engine, 'Checkpoint'), 'rdu_engine.Checkpoint missing'
+assert hasattr(rdu_engine, 'PEF'), 'rdu_engine.PEF missing'
+assert hasattr(rdu_engine.RDUTensor, 'dtype'), 'RDUTensor.dtype missing -- coe_api_rdutensor_dtype.patch not applied?'
+import coe_api
+assert hasattr(coe_api.RDUTensor, 'dtype'), 'coe_api.RDUTensor.dtype missing'
+print('rdu_engine/coe_api: OK (RDUTensor.dtype present)')
+"
 PYTHONPATH="$FAST_COE_SRC:$FAST_COE_SRC/server/inference-router/client-py:$FAST_COE_SRC/server/block_hash:${PYTHONPATH:-}" \
-    $PY -c "from rdu_hardware.worker import *; print('rdu_hardware.worker: OK')" 2>&1 | tail -5 || \
-    echo "  (rdu_hardware.worker import incomplete at build time — expected, coe_api mounts at runtime)"
+    $PY -c "from rdu_hardware.worker import *; print('rdu_hardware.worker: OK')"
 
 echo ""
 echo "=== RDU decode image dependency install COMPLETE $(date) ==="

@@ -15,21 +15,23 @@ vllm/vllm-openai (Docker image)  ─────────  GPU prefill worker
   + ai-dynamo (base package only)            │
                                              │
 sambanova/fast-coe's vllm-rdu             ──  RDU decode worker
-  (Docker image, Dockerfile.rdu, or         │   (hdi's proven connector/engine,
-   NFS venv via build_rdu_env.sh)           │    not the retired standalone
-  + andychensn/ucx + andychensn/nixl         │    andychensn/vllm-rdu fork)
-    (repo-built, rdu-ucx-install/)          │
+  (Docker image, Dockerfile.rdu)            │   (hdi's proven connector/engine,
+  + andychensn/ucx + andychensn/nixl         │    not the retired standalone
+    (repo-built, rdu-ucx-install/)          │    andychensn/vllm-rdu fork)
+  + coe_api/rdu_engine + BAR2 runtime        │
+    connector libs (self-built, baked in)   │
   + ai-dynamo (base package only)            │
                                              │
 etcd + NATS + dynamo.frontend             ──  Control plane
-  (Docker image, Dockerfile.control-plane,   │   (login node, or containerized)
-   or venv via control_plane.sh)             │
+  (Docker image, Dockerfile.control-plane)   │   (login node)
 ```
 
-coe_api/BAR2 runtime connector libs are **not** self-built or baked into the RDU Docker image — a
-self-build attempt hit a hard ABI/hardware-compatibility blocker (see `config/versions.env`'s
-`SOFTWARE_REPO_*` comment); `BAR2_INSTALL`/`BAR2_RUNTIME_LIBS`/`BAR2_PRELOAD` remain NFS paths,
-supplied at container runtime the same way `launch/rdu_decode.sh` already does on bare metal.
+`coe_api`/BAR2 runtime connector libs are **self-built and baked directly into the RDU Docker
+image** — built from a single pinned commit of `josephp/nova/ddr_alloc_mem2mem_AND_bar2_mappings`
+(see `config/versions.env`'s `SOFTWARE_REPO_*` comment and `scripts/build_bar2.sh`), no NFS mount
+needed at container runtime. (An earlier self-build attempt against the wrong branch/commit hit a
+hard ABI/hardware blocker — resolved 2026-07-05 once the actual working commit was identified
+directly from the engineer whose NFS tree this replaces.)
 
 Both sides install plain `ai-dynamo`/`ai-dynamo-runtime`, never the `[vllm]` extra — that extra
 pulls in vllm 0.20.x as a dependency, which breaks MiniMax-M2.7 (both sides pin vllm 0.16.0
@@ -108,15 +110,37 @@ snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
 
 ## Per-session launch
 
+**Docker is the supported path for all three components** (control plane, GPU prefill, RDU decode)
+as of 2026-07-05. Build the images once:
+
 ```bash
-# 1. Control plane (auto-creates .venv_cp on first run)
-bash launch/control_plane.sh
+bash scripts/build_docker_control_plane.sh   # -> $CONTROL_PLANE_IMAGE (config/cluster.env)
+bash scripts/build_docker_gpu.sh             # -> $GPU_IMAGE (config/cluster.env)
+bash scripts/build_docker_rdu.sh             # -> $RDU_IMAGE (config/cluster.env) — bakes in
+                                              #    self-built coe_api/rdu_engine + BAR2 runtime
+                                              #    connector libs (scripts/build_bar2.sh), no NFS
+                                              #    mount needed for any of it
+```
+
+Then launch, in order:
+
+```bash
+# 1. Control plane — etcd + NATS + dynamo.frontend in one container, --net=host on the login node
+sudo -g docker /usr/bin/docker-run-wrapper --pull=always --net=host --rm \
+    --name rdu-hdi-control-plane \
+    -e CONTROL_PLANE_IP -e ETCD_PORT -e NATS_PORT -e VLLM_PORT \
+    "$CONTROL_PLANE_IMAGE" &   # (source config/cluster.env first; run in the background, this is persistent)
 
 # 2. GPU prefill (~10 min: model load + warmup)
 bash launch/gpu_prefill.sh
 
-# 3. RDU decode — waits for GPU registration, then ~12 min
-source config/cluster.env && bash launch/rdu_decode.sh
+# 3. RDU decode — waits for GPU registration, then ~12-14 min BAR2/PEF init
+#    via snrdu on the RDU node, see scripts/_run_docker_rdu_decode.sh for the
+#    full docker-run-wrapper invocation (--net=host, --device /dev/rdu
+#    --device /dev/rdu_mem_map --device /dev/infiniband, --ulimit memlock=-1,
+#    --cap-add IPC_LOCK, and MODEL/SERVED_MODEL_NAME/MAX_MODEL_LEN/PEF/
+#    MODEL_CONFIG/CONTROL_PLANE_IP/... env vars — no BAR2_INSTALL/
+#    BAR2_RUNTIME_LIBS/BAR2_PRELOAD needed, they're baked into the image)
 
 # 4. Warmup (first request ~47s, cold NIXL init)
 source config/model.env
@@ -127,25 +151,14 @@ curl -s http://localhost:18000/v1/completions \
 
 > Do not start RDU decode before GPU prefill — Dynamo builds the wrong pipeline.
 
-### Docker-based launch (control plane + RDU decode)
+### Bare-metal launch (deprecated)
 
-Control plane and RDU decode can also run as Docker containers instead of the venv-based launch
-above (GPU prefill is always Docker — see `launch/gpu_prefill.sh`). Build once:
-
-```bash
-bash scripts/build_docker_control_plane.sh   # -> $CONTROL_PLANE_IMAGE (config/cluster.env)
-bash scripts/build_docker_rdu.sh             # -> $RDU_IMAGE (config/cluster.env)
-```
-
-Then run via `docker-run-wrapper` (see `scripts/test_docker_rdu_e2e.sh` for a full worked example of
-the RDU-decode container's required flags — `--net=host`, `--device /dev/rdu --device
-/dev/rdu_mem_map --device /dev/infiniband`, `--ulimit memlock=-1 --cap-add IPC_LOCK`, and the
-`BAR2_INSTALL`/`BAR2_RUNTIME_LIBS`/`BAR2_PRELOAD`/`MODEL`/`PEF`/... env vars from
-`config/cluster.env` + `config/model.env`). No Kubernetes deployment exists yet — this project runs
-directly on bare SLURM/`snrdu` nodes; a k8s design would need a device plugin for `/dev/rdu*`
-(`sambanova.ai/rdu-tile`) plus `hostNetwork: true` + hostPath `/dev/infiniband` + `IPC_LOCK` for the
-same RDMA reasons the Docker flags above need them, same as `gpu_prefill.sh`'s existing Docker
-invocation.
+`launch/control_plane.sh` (bare etcd/NATS/dynamo processes) and `launch/rdu_decode.sh` (bare
+`.venv_rdu`) still exist for reference/local debugging, but are no longer the supported path and are
+not actively maintained — `launch/rdu_decode.sh` in particular will fail as-is, since
+`config/cluster.env` no longer defines the `BAR2_RUNTIME_LIBS`/`BAR2_PRELOAD` vars it references
+(see that script's own header for how to restore them if you need this path). GPU prefill has always
+been Docker-only (`launch/gpu_prefill.sh`), unaffected by this.
 
 ## Benchmark
 
@@ -226,6 +239,10 @@ Docker works (`Dockerfile.rdu`, `docker/rdu-decode-entrypoint.sh`). Key non-obvi
    see `Dockerfile.rdu`'s comments for the exact mechanism. Package-version matching alone
    (`rdma-core-48.0` present in both bare metal and container) does not catch this; it's a
    file-level swap, not a package-level one.
-2. Does **not** bake in `coe_api`/BAR2 runtime connector libs — `BAR2_INSTALL`/`BAR2_RUNTIME_LIBS`/
-   `BAR2_PRELOAD` are supplied at container runtime from their existing NFS paths (self-build
-   deferred, see the architecture note above and `config/versions.env`).
+2. **`coe_api`/BAR2 runtime connector libs are baked in** (self-built, see `scripts/build_bar2.sh`
+   and the architecture note above) — no `BAR2_INSTALL`/`BAR2_RUNTIME_LIBS`/`BAR2_PRELOAD` env vars
+   or NFS mounts needed at container runtime. `rdu_engine`'s compiled extension also transitively
+   needs `libmpi.so.12` and a few abseil/circllhist libs — these ship inside `rhel810-dev` under
+   `/opt/sambanova/lib` but aren't on the default `LD_LIBRARY_PATH`; `Dockerfile.rdu` adds that
+   directory explicitly (a bare-metal launch masks this, since the node's own ambient
+   `LD_LIBRARY_PATH` already includes it — a container starts clean).

@@ -9,15 +9,15 @@
 #   - UCX is at a fixed path baked into the image (/opt/rdu-ucx), not
 #     resolved relative to $REPO_ROOT.
 #   - fast-coe is at a fixed path baked into the image (/build/fast-coe).
-#   - coe_api/rdu_engine and the BAR2 runtime connector libs are NOT baked
-#     in — BAR2_INSTALL/BAR2_RUNTIME_LIBS/BAR2_PRELOAD must be passed in as
-#     env vars pointing at NFS paths visible inside the container
-#     (docker-run-wrapper auto-mounts /import and /scratch at identical
-#     host paths on RDU nodes; a k8s pod spec would need an explicit
-#     hostPath volume for the same paths instead). Cluster
-#     topology (CONTROL_PLANE_IP, GPU_ROCE_IP, ...) and model config
-#     (MODEL, PEF, ...) are passed in as env vars too, not baked in, since
-#     both vary independently of the image build.
+#   - coe_api/rdu_engine (pip-installed) and the BAR2 runtime connector libs
+#     (/opt/bar2-runtime/{lib,preload}) are ALL baked into the image at
+#     build time (self-built, see scripts/build_bar2.sh) -- no NFS mount
+#     needed for any of this anymore (resolved 2026-07-05, see Dockerfile.rdu
+#     header). Cluster topology (CONTROL_PLANE_IP, GPU_ROCE_IP, ...) and
+#     model config (MODEL, PEF, ...) are still passed in as env vars, not
+#     baked in, since both vary independently of the image build -- MODEL/PEF
+#     point at NFS paths for the checkpoint/compiled-graph data, which this
+#     image doesn't and shouldn't try to embed.
 set -euo pipefail
 export PYTHONNOUSERSITE=1
 
@@ -30,19 +30,18 @@ export PYTHONNOUSERSITE=1
 : "${MAX_MODEL_LEN:?MAX_MODEL_LEN must be set}"
 : "${PEF:?PEF must be set (compiled PEF path)}"
 : "${MODEL_CONFIG:=}"
-: "${BAR2_INSTALL:?BAR2_INSTALL must be set (mounted NFS path — see Dockerfile.rdu header)}"
-: "${BAR2_RUNTIME_LIBS:?BAR2_RUNTIME_LIBS must be set (mounted NFS path)}"
-: "${BAR2_PRELOAD:?BAR2_PRELOAD must be set (mounted NFS path)}"
 : "${RDU_CACHE:=/tmp/rdu-cache}"
 
 FAST_COE_SRC=/build/fast-coe
 _UCX_LIB=/opt/rdu-ucx/lib
 _UCX_MOD=/opt/rdu-ucx/lib/ucx
+_BAR2_LIB=/opt/bar2-runtime/lib
+_BAR2_PRELOAD=/opt/bar2-runtime/preload
 
 mkdir -p "$RDU_CACHE"
 
-for p in "$BAR2_INSTALL/python" "$BAR2_RUNTIME_LIBS" "$BAR2_PRELOAD/libc_samba_runtime.so"; do
-    [ -e "$p" ] || { echo "ERROR: $p not found — is the NFS path actually mounted into this container?"; exit 1; }
+for p in "$_BAR2_LIB" "$_BAR2_PRELOAD/libc_samba_runtime.so"; do
+    [ -e "$p" ] || { echo "ERROR: $p not found — image build is incomplete (expected to be baked in, see Dockerfile.rdu)"; exit 1; }
 done
 
 # /dev/rdu and /dev/rdu_mem_map are NOT provided by docker-run-wrapper's
@@ -137,9 +136,9 @@ exec env \
     HF_HOME="$RDU_CACHE/huggingface" \
     VLLM_CONFIG_ROOT="$RDU_CACHE/vllm_config" \
     TRANSFORMERS_CACHE="$RDU_CACHE/huggingface" \
-    PYTHONPATH="$BAR2_INSTALL/python:$FAST_COE_SRC:$FAST_COE_SRC/server/inference-router/client-py:$FAST_COE_SRC/server/block_hash:${PYTHONPATH:-}" \
-    LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$BAR2_RUNTIME_LIBS:$BAR2_INSTALL/lib:${LD_LIBRARY_PATH:-}" \
-    LD_PRELOAD="$BAR2_PRELOAD/libc_samba_runtime.so:$BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
+    PYTHONPATH="$FAST_COE_SRC:$FAST_COE_SRC/server/inference-router/client-py:$FAST_COE_SRC/server/block_hash:${PYTHONPATH:-}" \
+    LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$_BAR2_LIB:${LD_LIBRARY_PATH:-}" \
+    LD_PRELOAD="$_BAR2_PRELOAD/libc_samba_runtime.so:$_BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
     /opt/sambanova/bin/python3.11 -m dynamo.vllm \
         --model "$MODEL" \
         --served-model-name "$SERVED_MODEL_NAME" \

@@ -1,9 +1,10 @@
 # Large directories no Dockerfile in this repo actually COPYs — excluding
 # them keeps the build context small (was 2.15GB without this file).
+# NOTE: rdu-runtime-install/ is NOT excluded (removed 2026-07-05) --
+# Dockerfile.rdu now COPYs it in (self-built BAR2 runtime libs).
 .git/
 bar2-build-src/
 rdu-build-src/
-rdu-runtime-install/
 logs/
 benchmark_results/
 InferenceX/

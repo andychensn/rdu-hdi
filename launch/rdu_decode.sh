@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# DEPRECATED (2026-07-05) -- Docker is now the supported way to run RDU
+# decode (scripts/_run_docker_rdu_decode.sh, using Dockerfile.rdu's
+# self-contained image -- coe_api/rdu_engine + BAR2 runtime connector libs
+# are baked in, no NFS mount needed). This bare-metal path is kept only for
+# reference/local debugging -- it is NOT actively maintained and will fail
+# outright as-is: config/cluster.env no longer defines BAR2_RUNTIME_LIBS/
+# BAR2_PRELOAD (removed once Dockerfile.rdu absorbed them), and this
+# script's --inner block references them directly. To use this path again,
+# set BAR2_INSTALL/BAR2_RUNTIME_LIBS/BAR2_PRELOAD explicitly in your own
+# environment (see git history before 2026-07-05 for the original NFS
+# values, or scripts/build_bar2.sh's rdu-runtime-install/{lib,preload}
+# output for the self-built equivalent) before running this script.
+#
 # RDU decode worker — submits SLURM job via snrdu, waits for Dynamo registration.
 # Usage: bash launch/rdu_decode.sh
 set -euo pipefail
@@ -51,6 +64,18 @@ if [[ "${1:-}" == "--inner" ]]; then
     echo "    side-channel: $RDU_ROCE_IP_LOCAL:5600"
 
     source "$RDU_VENV/bin/activate"
+
+    # BAR2_INSTALL is only needed when coe_api/rdu_engine come from an
+    # ad-hoc NFS tree (PYTHONPATH-based, e.g. jayr's bazel-install layout).
+    # When self-built via scripts/build_bar2.sh, coe_api/rdu_engine are
+    # pip-installed directly into $RDU_VENV's own site-packages instead --
+    # BAR2_INSTALL should be left empty/unset in that case. Keeping
+    # "$BAR2_INSTALL/python" unconditionally in PYTHONPATH would otherwise
+    # SHADOW the pip-installed self-built packages (PYTHONPATH takes
+    # precedence over site-packages), silently reintroducing the NFS
+    # dependency this is meant to eliminate.
+    _BAR2_PY="${BAR2_INSTALL:+$BAR2_INSTALL/python:}"
+    _BAR2_LIB="${BAR2_INSTALL:+$BAR2_INSTALL/lib:}"
 
     RDU_CONFIG="${MODEL_CONFIG:-}"
     [ -n "$RDU_CONFIG" ] && [ ! -f "$RDU_CONFIG" ] && {
@@ -113,8 +138,8 @@ if [[ "${1:-}" == "--inner" ]]; then
     HF_HOME="$RDU_CACHE/huggingface" \
     VLLM_CONFIG_ROOT="$RDU_CACHE/vllm_config" \
     TRANSFORMERS_CACHE="$RDU_CACHE/huggingface" \
-    PYTHONPATH="$BAR2_INSTALL/python:$REPO_ROOT/fast-coe:$REPO_ROOT/fast-coe/server/inference-router/client-py:$REPO_ROOT/fast-coe/server/block_hash:${PYTHONPATH:-}" \
-    LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$BAR2_RUNTIME_LIBS:$BAR2_INSTALL/lib:${LD_LIBRARY_PATH:-}" \
+    PYTHONPATH="${_BAR2_PY}$REPO_ROOT/fast-coe:$REPO_ROOT/fast-coe/server/inference-router/client-py:$REPO_ROOT/fast-coe/server/block_hash:${PYTHONPATH:-}" \
+    LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$BAR2_RUNTIME_LIBS:${_BAR2_LIB}${LD_LIBRARY_PATH:-}" \
     LD_PRELOAD="$BAR2_PRELOAD/libc_samba_runtime.so:$BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
         exec python -m dynamo.vllm \
             --model "$MODEL" \

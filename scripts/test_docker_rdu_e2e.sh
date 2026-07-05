@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Test the rdu-hdi-rdu-decode Docker image end-to-end. Run via snrdu on the
 # RDU node. Assumes control plane + GPU prefill are already running.
+set -euo pipefail
 REPO_ROOT=/import/snvm-sc-scratch1/andyc/rdu-hdi
 source "$REPO_ROOT/config/cluster.env"
 source "$REPO_ROOT/config/model.env"
@@ -30,9 +31,6 @@ sudo -g docker /usr/bin/docker-run-wrapper --pull=always --net=host --rm \
     -e MAX_MODEL_LEN="$MAX_MODEL_LEN" \
     -e PEF="$PEF" \
     -e MODEL_CONFIG="$MODEL_CONFIG" \
-    -e BAR2_INSTALL="$BAR2_INSTALL" \
-    -e BAR2_RUNTIME_LIBS="$BAR2_RUNTIME_LIBS" \
-    -e BAR2_PRELOAD="$BAR2_PRELOAD" \
     "$RDU_IMAGE" &
 CONTAINER_PID=$!
 echo "  shell PID: $CONTAINER_PID"

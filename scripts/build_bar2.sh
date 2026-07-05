@@ -85,25 +85,47 @@ fetch_sources() {
     echo "=== Phase 1: Fetching SambaNova/software @ $SOFTWARE_REPO_COMMIT ==="
     mkdir -p "$SRC_DIR"
 
+    NEED_CLONE=1
     if [ -d "$SOFTWARE_SRC/.git" ]; then
         CURRENT_SHA=$(git -C "$SOFTWARE_SRC" rev-parse HEAD)
         if [ "$CURRENT_SHA" = "$SOFTWARE_REPO_COMMIT" ]; then
             echo "  already at pinned commit, skipping clone"
-            return
+            NEED_CLONE=0
+        else
+            echo "  present but at wrong commit ($CURRENT_SHA) — re-fetching"
         fi
-        echo "  present but at wrong commit ($CURRENT_SHA) — re-fetching"
     fi
 
-    rm -rf "$SOFTWARE_SRC"
-    git clone --branch "$SOFTWARE_REPO_BRANCH" --depth 1 "$SOFTWARE_REPO_URL" "$SOFTWARE_SRC"
-    ACTUAL_SHA=$(git -C "$SOFTWARE_SRC" rev-parse HEAD)
-    if [ "$ACTUAL_SHA" != "$SOFTWARE_REPO_COMMIT" ]; then
-        echo "  branch tip has moved: expected $SOFTWARE_REPO_COMMIT, got $ACTUAL_SHA"
-        echo "  fetching the exact pinned commit explicitly..."
-        git -C "$SOFTWARE_SRC" fetch --depth 1 origin "$SOFTWARE_REPO_COMMIT"
-        git -C "$SOFTWARE_SRC" checkout "$SOFTWARE_REPO_COMMIT"
+    if [ "$NEED_CLONE" = "1" ]; then
+        rm -rf "$SOFTWARE_SRC"
+        git clone --branch "$SOFTWARE_REPO_BRANCH" --depth 1 "$SOFTWARE_REPO_URL" "$SOFTWARE_SRC"
+        ACTUAL_SHA=$(git -C "$SOFTWARE_SRC" rev-parse HEAD)
+        if [ "$ACTUAL_SHA" != "$SOFTWARE_REPO_COMMIT" ]; then
+            echo "  branch tip has moved: expected $SOFTWARE_REPO_COMMIT, got $ACTUAL_SHA"
+            echo "  fetching the exact pinned commit explicitly..."
+            git -C "$SOFTWARE_SRC" fetch --depth 1 origin "$SOFTWARE_REPO_COMMIT"
+            git -C "$SOFTWARE_SRC" checkout "$SOFTWARE_REPO_COMMIT"
+        fi
+        echo "  checked out $(git -C "$SOFTWARE_SRC" rev-parse HEAD)"
     fi
-    echo "  checked out $(git -C "$SOFTWARE_SRC" rev-parse HEAD)"
+
+    apply_local_patches
+}
+
+# jayr's BAR2_INSTALL has one uncommitted, never-upstreamed local patch (adds
+# CoETensor/RDUTensor.dtype -- see config/versions.env's SOFTWARE_REPO_*
+# comment for why this matters: fast-coe's pipeline.py was validated against
+# a coe_api build WITH this attribute). Captured as our own patch file so
+# it's reproducible without depending on jayr's personal checkout surviving.
+apply_local_patches() {
+    local PATCH="$REPO_ROOT/patches/software-repo/coe_api_rdutensor_dtype.patch"
+    [ -f "$PATCH" ] || { echo "ERROR: $PATCH not found"; exit 1; }
+    if git -C "$SOFTWARE_SRC" apply --reverse --check "$PATCH" 2>/dev/null; then
+        echo "  coe_api_rdutensor_dtype.patch already applied, skipping"
+        return
+    fi
+    git -C "$SOFTWARE_SRC" apply "$PATCH"
+    echo "  applied patches/software-repo/coe_api_rdutensor_dtype.patch"
 }
 
 RHEL810_DEV_IMAGE="artifacts.sambanovasystems.com/sw-docker/rhel810-dev:latest"
@@ -231,17 +253,64 @@ build_runtime_graph_libs() {
     # rdu_ver_to_sn_ver map).
     "$PY311" build.py -b graph -bt Release -rv ts16
 
-    # hal_snlib_{sn_version} is the only HAL target the "graph" group builds
-    # (there's no corresponding hal_snd_* CMake target in this target group —
-    # HAL_SNDLIB in hal_platform.c's arch table is for a different subsystem
-    # this stack doesn't use). Only glob for what's actually built.
+    # BUG FOUND (2026-07-04): this used to only copy libc_samba_runtime.so*/
+    # libcpp_samba_runtime.so*/libhal_snlib_*.so* -- a 3-file allowlist based
+    # on a wrong assumption that those were the only outputs that mattered.
+    # `ldd` on the built libcpp_samba_runtime.so.4.13 shows it dynamically
+    # links against ~20 SIBLING libraries also produced by this same "graph"
+    # CMake target group (libsamba_ccl.so, libsn_lib.so, librduconnect.so,
+    # libsamba_connector.so, libtransport.so, libdyn_comm_lib.so, etc.) --
+    # confirmed by direct comparison against guoyaof's known-working
+    # sw_ddr_rdma_install tree, which ships the FULL set (~25 .so files) side
+    # by side, not just 3. Copying only 3 meant libcpp_samba_runtime.so would
+    # fail to find its dependencies in $RUNTIME_INSTALL/lib at runtime and
+    # could silently fall through LD_LIBRARY_PATH to a mismatched version
+    # from elsewhere -- the most likely actual cause of the earlier RDU
+    # hardware tile fault (a cross-version ABI corruption, not a wrong branch
+    # per se). Fix: copy the entire build/graph/lib/ output, matching what
+    # the known-working NFS trees actually contain.
+    #
+    # NOTE: do NOT `rm -rf "$RUNTIME_INSTALL/lib"` here -- build_on_rdu_node()
+    # calls build_extra_runtime_shared_libs() (libAbseil.so/libLlvm21.so/etc.)
+    # BEFORE this function, into this SAME directory. Wiping the whole dir
+    # deletes those (caught via a real ImportError: libLlvm21.so not found,
+    # not just a theoretical concern). Only remove this function's OWN prior
+    # output before re-copying, so it's still idempotent across re-runs
+    # without clobbering the other function's files.
     mkdir -p "$RUNTIME_INSTALL/lib"
-    rm -f "$RUNTIME_INSTALL/lib/"libc_samba_runtime.so* "$RUNTIME_INSTALL/lib/"libcpp_samba_runtime.so* \
-          "$RUNTIME_INSTALL/lib/"libhal_snlib_*.so*
-    cp build/graph/lib/libc_samba_runtime.so* build/graph/lib/libcpp_samba_runtime.so* \
-       build/graph/lib/libhal_snlib_*.so* "$RUNTIME_INSTALL/lib/"
-    echo "  copied graph-group libs to $RUNTIME_INSTALL/lib/"
+    if [ -d build/graph/lib ]; then
+        find build/graph/lib -maxdepth 1 -mindepth 1 -printf '%f\n' | while read -r f; do
+            rm -rf "$RUNTIME_INSTALL/lib/$f"
+        done
+    fi
+    cp -a build/graph/lib/. "$RUNTIME_INSTALL/lib/"
+    echo "  copied $(ls build/graph/lib/ | wc -l) graph-group libs to $RUNTIME_INSTALL/lib/"
     ls "$RUNTIME_INSTALL/lib/"
+}
+
+# Bare-metal /opt/sambaflow's own libc_samba_runtime.so/libcpp_samba_runtime.so
+# carry a baked-in DT_RPATH back to /opt/sambaflow -- RPATH beats
+# LD_LIBRARY_PATH, so just adding our build to LD_LIBRARY_PATH is NOT enough
+# to make it win. libNovaRuntime dlopen()s the UNVERSIONED name
+# "libc_samba_runtime.so" (not the "libc_samba_runtime.so.4.13" this build
+# actually produces), so the fix (same one guoyaof's bar2_preload_libs/ and
+# hdi's own start_vllm_rdu_decode.sh use) is: copy the .4.13 file, patch its
+# own DT_SONAME to the unversioned name via patchelf, and force-load it via
+# LD_PRELOAD -- LD_PRELOAD's own explicit unversioned name then wins the
+# dlopen() regardless of RPATH. Confirmed via readelf -d that this exactly
+# matches guoyaof's known-working bar2_preload_libs/ SONAME pattern.
+build_preload_libs() {
+    echo "=== Building LD_PRELOAD copies (SONAME-patched) $(date) ==="
+    which patchelf >/dev/null 2>&1 || { echo "ERROR: patchelf not found (pip install --user patchelf, or dnf install patchelf)"; exit 1; }
+    mkdir -p "$RUNTIME_INSTALL/preload"
+    for base in libc_samba_runtime libcpp_samba_runtime; do
+        SRC="$RUNTIME_INSTALL/lib/${base}.so.4.13"
+        DST="$RUNTIME_INSTALL/preload/${base}.so"
+        [ -f "$SRC" ] || { echo "ERROR: $SRC not found — run build_runtime_graph_libs first"; exit 1; }
+        cp -f "$SRC" "$DST"
+        patchelf --set-soname "${base}.so" "$DST"
+        echo "  $DST: $(readelf -d "$DST" | grep SONAME)"
+    done
 }
 
 build_on_rdu_node() {
@@ -259,6 +328,8 @@ build_on_rdu_node() {
     build_extra_runtime_shared_libs
     echo ""
     build_runtime_graph_libs
+    echo ""
+    build_preload_libs
     echo ""
     echo "=== BAR2 self-build COMPLETE $(date) ==="
 }

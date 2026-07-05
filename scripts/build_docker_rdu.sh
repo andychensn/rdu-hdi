@@ -3,14 +3,16 @@
 # Run from login node — the FROM base image (rhel810-dev) brings
 # /opt/sambanova along, same principle as Dockerfile.gpu bringing CUDA
 # along via FROM vllm/vllm-openai, so no snrdu/RDU node is needed to BUILD
-# this image (only to RUN it — see docker-run-wrapper's auto-mount of
-# /import/scratch for the BAR2_* NFS paths at container runtime).
+# this image (only to RUN it).
 #
-# Prerequisite: rdu-ucx-install/ and wheelhouse/{vllm+cpu,ai_dynamo*,
-# nixl_cu12,...}.whl must already exist (built via
-# scripts/build_rdu_env.sh --fetch-only / --build-only) — this script does
-# NOT build those from source, it only bakes the already-built artifacts
-# into the image.
+# Prerequisites (this script does NOT build any of these from source, it
+# only bakes already-built artifacts into the image):
+#   - rdu-ucx-install/ and wheelhouse/{vllm+cpu,ai_dynamo*,nixl_cu12,...}.whl
+#     — built via scripts/build_rdu_env.sh --fetch-only / --build-only
+#   - wheelhouse/sambanova_{rdu_engine_api,coe_api}-*.whl and
+#     rdu-runtime-install/{lib,preload}/ — self-built coe_api/BAR2 runtime,
+#     built via scripts/build_bar2.sh --fetch-only / --build-only (2026-07-05:
+#     now baked into the image, no NFS mount needed at container runtime)
 #
 # Usage:
 #   bash scripts/build_docker_rdu.sh             # builds + pushes with default tag
@@ -38,6 +40,10 @@ done
 [ -d "$REPO_ROOT/rdu-ucx-install/lib" ] || { echo "ERROR: rdu-ucx-install/ not found — run scripts/build_rdu_env.sh first"; exit 1; }
 [ -n "$(find "$REPO_ROOT/wheelhouse" -name 'vllm-*+cpu-cp311*.whl' 2>/dev/null)" ] || { echo "ERROR: no vllm +cpu wheel in wheelhouse/ — run scripts/build_rdu_env.sh first"; exit 1; }
 [ -d "$REPO_ROOT/fast-coe/server/vllm-rdu" ] || { echo "ERROR: fast-coe/ not found — run scripts/build_rdu_env.sh --fetch-only first"; exit 1; }
+[ -n "$(find "$REPO_ROOT/wheelhouse" -name 'sambanova_rdu_engine_api-*.whl' 2>/dev/null)" ] || { echo "ERROR: no sambanova_rdu_engine_api wheel in wheelhouse/ — run scripts/build_bar2.sh first"; exit 1; }
+[ -n "$(find "$REPO_ROOT/wheelhouse" -name 'sambanova_coe_api-*.whl' 2>/dev/null)" ] || { echo "ERROR: no sambanova_coe_api wheel in wheelhouse/ — run scripts/build_bar2.sh first"; exit 1; }
+[ -n "$(ls -A "$REPO_ROOT/rdu-runtime-install/lib" 2>/dev/null)" ] || { echo "ERROR: rdu-runtime-install/lib/ empty or missing — run scripts/build_bar2.sh first"; exit 1; }
+[ -n "$(ls -A "$REPO_ROOT/rdu-runtime-install/preload" 2>/dev/null)" ] || { echo "ERROR: rdu-runtime-install/preload/ empty or missing — run scripts/build_bar2.sh first"; exit 1; }
 # .dockerignore excludes fast-coe/.git/ from the Docker build context (keeps
 # it small), so the pinned-commit check has to happen here instead of inside
 # the Dockerfile.
