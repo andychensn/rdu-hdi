@@ -104,6 +104,14 @@ snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
     --allow-local-lib-python --reservation "$RDU_RESERVATION" \
     --pef "$PEF" --timeout "$RDU_TIMEOUT" -o logs/build_rdu_env.log \
     -- bash scripts/build_rdu_env.sh --build-only
+
+# 5. Self-build coe_api/rdu_engine + the BAR2 runtime connector libs (required
+#    by build_docker_rdu.sh below) — same two-phase pattern.
+bash scripts/build_bar2.sh --fetch-only
+snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
+    --allow-local-lib-python --reservation "$RDU_RESERVATION" \
+    --pef "$PEF" --timeout "$RDU_TIMEOUT" -o logs/build_bar2.log \
+    -- bash scripts/build_bar2.sh --build-only
 ```
 
 ---
@@ -126,9 +134,13 @@ Then launch, in order:
 
 ```bash
 # 1. Control plane — etcd + NATS + dynamo.frontend in one container, --net=host on the login node
+#    NOTE: use -e VAR="$VAR" (explicit value), not bare -e VAR — sudo strips the calling
+#    shell's environment by default, so bare -e VAR forwards an EMPTY value and the
+#    entrypoint fails with "CONTROL_PLANE_IP must be set".
 sudo -g docker /usr/bin/docker-run-wrapper --pull=always --net=host --rm \
     --name rdu-hdi-control-plane \
-    -e CONTROL_PLANE_IP -e ETCD_PORT -e NATS_PORT -e VLLM_PORT \
+    -e CONTROL_PLANE_IP="$CONTROL_PLANE_IP" -e ETCD_PORT="$ETCD_PORT" \
+    -e NATS_PORT="$NATS_PORT" -e VLLM_PORT="$VLLM_PORT" \
     "$CONTROL_PLANE_IMAGE" &   # (source config/cluster.env first; run in the background, this is persistent)
 
 # 2. GPU prefill (~10 min: model load + warmup)
@@ -193,6 +205,28 @@ nodes (for RoCE RDMA). Containers run as non-root — default any writable-path 
 unless proven otherwise.
 
 ---
+
+## NFS dependencies
+
+Confirmed by a full wipe-and-rebuild reproducibility test (2026-07-05): the only genuinely
+external assets this stack reads from a network filesystem at runtime are:
+
+1. **The model checkpoint** — split across two paths for the two sides: `MODEL` (`config/model.env`,
+   `/import/...`) is read by GPU prefill and by RDU decode's tokenizer/config path (RDU loads
+   weights with `--load-format dummy`, it doesn't read tensor data from here); `MINI_CKPT_FP8`
+   (`config/minimax_m2.yaml`, `/scratch/...`) is the actual weight source the RDU engine loads.
+2. **The PEF** — `PEF` (`config/model.env`, `/import/...`) and the identical path embedded as
+   `MINI_PEF_FP8` in `config/minimax_m2.yaml`.
+3. **`BRCM_ROCELIB`** (`/import/it-tools/idc/fw/brcm/237/bcm_237.1.148.0a/drivers_linux/bnxt_rocelib`)
+   — build-time only, staged into the build context and `COPY`'d into `Dockerfile.gpu`; never
+   referenced at container runtime.
+
+Two more `/import` reads exist but are repo-owned, not external dependencies: `MODEL_CONFIG`
+(`config/minimax_m2.yaml`, tracked in this repo) and GPU prefill's cache dirs (`.gpu_cache/`,
+gitignored scratch space). Both are reachable only because `cuda-docker-run-wrapper`/
+`docker-run-wrapper` auto-mount `/import`/`/scratch` with no explicit `-v` flags anywhere in
+`launch/gpu_prefill.sh` or `scripts/_run_docker_rdu_decode.sh` — worth re-checking if this stack is
+ever deployed somewhere without that auto-mount convention (e.g. a future k8s deploy).
 
 ## Known gaps
 

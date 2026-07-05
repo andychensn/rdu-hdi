@@ -4,6 +4,7 @@ rdu-ucx-install/
 .venv_gpu/
 .venv_cp/
 .venv_rdu/
+.venv_bench/
 .gpu_cache/
 .rdu_cache/
 .etcd_data/

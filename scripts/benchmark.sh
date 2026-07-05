@@ -84,9 +84,20 @@ fi
 BENCH_SCRIPT="$INFERENCEX_DIR/utils/bench_serving/benchmark_serving.py"
 BENCH_DIR="$INFERENCEX_DIR/utils/bench_serving"
 
-# ── Python env for benchmarking (use control plane venv — has transformers/tokenizers) ─
-VENV="$REPO_ROOT/.venv_cp"
-[ ! -d "$VENV" ] && { echo "ERROR: .venv_cp not found — run bash launch/control_plane.sh once to create it"; exit 1; }
+# ── Python env for benchmarking (self-contained — do NOT depend on the
+# deprecated bare-metal control-plane venv; that venv only ever existed as a
+# side effect of launch/control_plane.sh, which nothing creates anymore now
+# that the control plane is Docker-only) ────────────────────────────────────
+VENV="$REPO_ROOT/.venv_bench"
+if [ ! -d "$VENV" ]; then
+    echo "Creating benchmark venv ($VENV)..."
+    python3.12 -m venv "$VENV"
+    "$VENV/bin/pip" install -q --upgrade pip
+    # numpy/tqdm/transformers: benchmark_serving.py's own top-level imports.
+    # aiohttp: backend_request_func.py's async HTTP client (not a transitive
+    # dep of the above three — easy to miss).
+    "$VENV/bin/pip" install -q numpy transformers tqdm aiohttp
+fi
 PYTHON="$VENV/bin/python"
 
 mkdir -p "$RESULT_DIR"
