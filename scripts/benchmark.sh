@@ -17,22 +17,14 @@
 #   --seed           N                 (default: unique per invocation, see below)
 #   --result-dir     DIR               (default: $REPO_ROOT/benchmark_results)
 #
-# BUG FOUND (2026-07-05): InferenceX's benchmark_serving.py defaults --seed to
-# a HARDCODED 0 (random.seed(args.seed)/np.random.seed(args.seed) at its own
-# startup) if not passed. Since the "random" dataset generator is otherwise
-# deterministic given (seed, input-len, num-prompts), any two invocations with
-# the same --input-len/--num-prompts (e.g. running conc=1/2/4 at the same ISL
-# back-to-back, as every sweep in this repo does) generate BYTE-IDENTICAL
-# prompts. Combined with GPU prefill's --enable-prefix-caching, later
-# same-ISL runs get real prefix-cache hits from the immediately-preceding
-# run's KV cache -- confirmed via gpu_prefill's own logged "Prefix cache hit
-# rate" climbing from 0% to 65%+ over a 9-config sweep. This produced wildly
-# unrealistic TTFT "improvements" (up to -92%) at high ISL/concurrency that
-# had nothing to do with whatever's actually being benchmarked -- a pure
-# measurement artifact. Fix: default --seed to something unique per
-# invocation (mixing PID + time), so every benchmark.sh call gets fresh,
-# non-overlapping prompt content unless a seed is explicitly requested for
-# reproducibility.
+# NOTE on --seed: InferenceX's benchmark_serving.py defaults --seed to a
+# hardcoded 0 if not passed, and its "random" dataset generator is otherwise
+# deterministic given (seed, input-len, num-prompts) — so back-to-back runs
+# at the same ISL (e.g. sweeping conc=1/2/4) would generate byte-identical
+# prompts, which spuriously inflates GPU prefill's prefix-cache hit rate and
+# skews TTFT. This script instead defaults --seed to something unique per
+# invocation (PID + time), so every call gets fresh, non-overlapping prompt
+# content unless a seed is explicitly requested for reproducibility.
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
@@ -54,7 +46,7 @@ CONCURRENCY=1
 NUM_PROMPTS=10
 RESULT_DIR="$REPO_ROOT/benchmark_results"
 # Unique per invocation (PID + seconds-since-epoch, masked to fit a plausible
-# int32 seed) unless overridden — see the BUG FOUND note above.
+# int32 seed) unless overridden — see the --seed note above.
 SEED=$(( ($(date +%s) * 1000 + $$) % 2147483647 ))
 
 # ── Parse args ────────────────────────────────────────────────────────────────

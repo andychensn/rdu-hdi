@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
-# ACTIVE build path (resolved 2026-07-05) -- produces the wheels under
-# wheelhouse/ and the libs under rdu-runtime-install/ that
-# docker/rdu-decode-install-deps.sh and Dockerfile.rdu bake into the RDU
-# decode image. Two earlier candidate branches (josephp/nova/scattergather_integration,
-# guoyaof/ddr-rdma-direct) hit hard ABI/hardware-compatibility blockers and were
-# abandoned before the real branch was identified -- see config/versions.env's
-# SOFTWARE_REPO_* comment for the full history.
+# Produces the wheels under wheelhouse/ and the libs under
+# rdu-runtime-install/ that docker/rdu-decode-install-deps.sh and
+# Dockerfile.rdu bake into the RDU decode image.
 #
 # Build coe_api/rdu_engine (Python wheel) and the runtime connector libs
 # (libc_samba_runtime.so/libcpp_samba_runtime.so) from a pinned commit of
-# SambaNova/software, replacing the ad-hoc NFS trees BAR2_INSTALL/
-# BAR2_RUNTIME_LIBS/BAR2_PRELOAD used to point at. See
-# docs/local/DOCKERIZE_BAR2_PLAN.md for the full investigation and plan.
+# SambaNova/software (config/versions.env's SOFTWARE_REPO_* vars),
+# replacing the ad-hoc NFS trees BAR2_INSTALL/BAR2_RUNTIME_LIBS/BAR2_PRELOAD
+# used to point at.
 #
 # Two phases, matching every other RDU build script in this repo:
 #
@@ -114,11 +110,11 @@ fetch_sources() {
     apply_local_patches
 }
 
-# jayr's BAR2_INSTALL has one uncommitted, never-upstreamed local patch (adds
+# The pinned commit needs one additional local patch (adds
 # CoETensor/RDUTensor.dtype -- see config/versions.env's SOFTWARE_REPO_*
 # comment for why this matters: fast-coe's pipeline.py was validated against
-# a coe_api build WITH this attribute). Captured as our own patch file so
-# it's reproducible without depending on jayr's personal checkout surviving.
+# a coe_api build WITH this attribute), captured as our own patch file so
+# the build doesn't depend on any one engineer's personal checkout surviving.
 apply_local_patches() {
     local PATCH="$REPO_ROOT/patches/software-repo/coe_api_rdutensor_dtype.patch"
     [ -f "$PATCH" ] || { echo "ERROR: $PATCH not found"; exit 1; }
@@ -166,10 +162,10 @@ build_coe_api_wheel() {
     # coe_api_py311_wheel: a *separate* Bazel target — a thin backward-compat
     # shim (coe_api.*.so, built from py_coe_api_compat.cpp) that re-exports
     # rdu_engine under the legacy `coe_api` name. All of fast-coe/vllm-rdu's
-    # production code imports `coe_api`, not `rdu_engine` — jayr's existing
-    # working BAR2_INSTALL tree ships both .so files side by side, so both
-    # must be built here too or `import coe_api` silently falls back to
-    # whatever ambient system install happens to be on the node.
+    # production code imports `coe_api`, not `rdu_engine` — known-working
+    # BAR2_INSTALL trees ship both .so files side by side, so both must be
+    # built here too or `import coe_api` silently falls back to whatever
+    # ambient system install happens to be on the node.
     "$BAZELISK_BIN" --output_base="$BAZEL_OUTPUT_BASE" build -c opt \
         --strategy=CppCompile=local \
         //frontend/nova/coe_api:rdu_engine_py311_wheel \
@@ -248,37 +244,27 @@ build_runtime_graph_libs() {
     # and imports fine, but fails at actual RDU session creation with
     # `Unable to open low-level dynamic lib: libhal_snlib_sn40.so`
     # (hal_platform.c's dlopen() is runtime chip-detected, not build-time
-    # gated). guoyaof's known-working sw_ddr_rdma tree ships
-    # libhal_snlib_sn40+.so (WITH the plus, confirming ts16/TAURUS16, not
-    # plain ts/TAURUS which would produce sn40 without a plus — see
-    # runtime/src/lib/hal/hal_platform.c and runtime/python/utils.py's
+    # gated). Known-working trees ship libhal_snlib_sn40+.so (WITH the plus,
+    # confirming ts16/TAURUS16, not plain ts/TAURUS which would produce
+    # sn40 without a plus — see runtime/src/lib/hal/hal_platform.c and
+    # runtime/python/utils.py's
     # rdu_ver_to_sn_ver map).
     "$PY311" build.py -b graph -bt Release -rv ts16
 
-    # BUG FOUND (2026-07-04): this used to only copy libc_samba_runtime.so*/
-    # libcpp_samba_runtime.so*/libhal_snlib_*.so* -- a 3-file allowlist based
-    # on a wrong assumption that those were the only outputs that mattered.
-    # `ldd` on the built libcpp_samba_runtime.so.4.13 shows it dynamically
-    # links against ~20 SIBLING libraries also produced by this same "graph"
-    # CMake target group (libsamba_ccl.so, libsn_lib.so, librduconnect.so,
+    # Copy the entire build/graph/lib/ output, not a hand-picked subset --
+    # `ldd` on libcpp_samba_runtime.so.4.13 shows it dynamically links
+    # against ~20 sibling libraries also produced by this same "graph" CMake
+    # target group (libsamba_ccl.so, libsn_lib.so, librduconnect.so,
     # libsamba_connector.so, libtransport.so, libdyn_comm_lib.so, etc.) --
-    # confirmed by direct comparison against guoyaof's known-working
-    # sw_ddr_rdma_install tree, which ships the FULL set (~25 .so files) side
-    # by side, not just 3. Copying only 3 meant libcpp_samba_runtime.so would
-    # fail to find its dependencies in $RUNTIME_INSTALL/lib at runtime and
-    # could silently fall through LD_LIBRARY_PATH to a mismatched version
-    # from elsewhere -- the most likely actual cause of the earlier RDU
-    # hardware tile fault (a cross-version ABI corruption, not a wrong branch
-    # per se). Fix: copy the entire build/graph/lib/ output, matching what
-    # the known-working NFS trees actually contain.
+    # missing any of them lets LD_LIBRARY_PATH silently fall through to a
+    # mismatched version elsewhere instead of failing loudly.
     #
     # NOTE: do NOT `rm -rf "$RUNTIME_INSTALL/lib"` here -- build_on_rdu_node()
     # calls build_extra_runtime_shared_libs() (libAbseil.so/libLlvm21.so/etc.)
     # BEFORE this function, into this SAME directory. Wiping the whole dir
-    # deletes those (caught via a real ImportError: libLlvm21.so not found,
-    # not just a theoretical concern). Only remove this function's OWN prior
-    # output before re-copying, so it's still idempotent across re-runs
-    # without clobbering the other function's files.
+    # would delete those. Only remove this function's OWN prior output before
+    # re-copying, so it's still idempotent across re-runs without clobbering
+    # the other function's files.
     mkdir -p "$RUNTIME_INSTALL/lib"
     if [ -d build/graph/lib ]; then
         find build/graph/lib -maxdepth 1 -mindepth 1 -printf '%f\n' | while read -r f; do
@@ -295,12 +281,10 @@ build_runtime_graph_libs() {
 # LD_LIBRARY_PATH, so just adding our build to LD_LIBRARY_PATH is NOT enough
 # to make it win. libNovaRuntime dlopen()s the UNVERSIONED name
 # "libc_samba_runtime.so" (not the "libc_samba_runtime.so.4.13" this build
-# actually produces), so the fix (same one guoyaof's bar2_preload_libs/ and
-# hdi's own start_vllm_rdu_decode.sh use) is: copy the .4.13 file, patch its
-# own DT_SONAME to the unversioned name via patchelf, and force-load it via
-# LD_PRELOAD -- LD_PRELOAD's own explicit unversioned name then wins the
-# dlopen() regardless of RPATH. Confirmed via readelf -d that this exactly
-# matches guoyaof's known-working bar2_preload_libs/ SONAME pattern.
+# actually produces), so the fix (same one hdi's own start_vllm_rdu_decode.sh
+# uses) is: copy the .4.13 file, patch its own DT_SONAME to the unversioned
+# name via patchelf, and force-load it via LD_PRELOAD -- LD_PRELOAD's own
+# explicit unversioned name then wins the dlopen() regardless of RPATH.
 build_preload_libs() {
     echo "=== Building LD_PRELOAD copies (SONAME-patched) $(date) ==="
     which patchelf >/dev/null 2>&1 || { echo "ERROR: patchelf not found (pip install --user patchelf, or dnf install patchelf)"; exit 1; }

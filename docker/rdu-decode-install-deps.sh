@@ -234,15 +234,12 @@ JITER_WHL=$(find "$WHEELHOUSE" -name "jiter-*cp311*.whl" 2>/dev/null | head -1)
 install_whl "pydantic-*.whl"
 install_whl "typing_extensions-*.whl"
 
-# py-cpuinfo (imported as `cpuinfo`): a genuine gap between rhel810-dev's
-# base /opt/sambanova install and the real RDU node's ambient site-packages
-# (present there, per an earlier direct inventory this session, but not in
-# this base image) — vllm.usage.usage_lib imports it unconditionally.
-# Discovered by actually running this script and hitting
-# ModuleNotFoundError, exactly the --system-site-packages audit risk
-# docs/local/DOCKERIZE_BAR2_PLAN.md §4.9 flagged. Not in wheelhouse (never
-# needed fetching on bare metal where it's already ambient) — pip install
-# directly from PyPI, same as transformers/the Dynamo messaging deps above.
+# py-cpuinfo (imported as `cpuinfo`): a gap between rhel810-dev's base
+# /opt/sambanova install (doesn't have it) and a bare-metal RDU node's
+# ambient site-packages (does) — vllm.usage.usage_lib imports it
+# unconditionally. Not in wheelhouse (never needed fetching on bare metal
+# where it's already ambient) — pip install directly from PyPI, same as
+# transformers/the Dynamo messaging deps above.
 echo "=== py-cpuinfo (gap vs rhel810-dev's base /opt/sambanova install) ==="
 $PIP install -q py-cpuinfo
 
@@ -255,11 +252,11 @@ LD_LIBRARY_PATH="$RDU_UCX_LIB:${LD_LIBRARY_PATH:-}" $PY -c "import nixl; print('
 $PY -c "import av; print(f'av: {av.__version__}')"
 $PY -c "from dynamo.vllm.main import main; print('dynamo.vllm.main: OK')"
 
-# coe_api/rdu_engine are now baked in (self-built, not NFS-mounted) --
+# coe_api/rdu_engine are baked in (self-built, not NFS-mounted) --
 # LD_LIBRARY_PATH already includes /opt/bar2-runtime/lib via this
 # Dockerfile's own ENV instruction, so a plain import must succeed here,
-# not just at container runtime. RDUTensor.dtype confirms jayr's local
-# patch (patches/software-repo/coe_api_rdutensor_dtype.patch) took effect.
+# not just at container runtime. RDUTensor.dtype confirms
+# patches/software-repo/coe_api_rdutensor_dtype.patch was applied.
 $PY -c "
 import rdu_engine
 assert hasattr(rdu_engine, 'Checkpoint'), 'rdu_engine.Checkpoint missing'

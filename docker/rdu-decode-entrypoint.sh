@@ -12,12 +12,11 @@
 #   - coe_api/rdu_engine (pip-installed) and the BAR2 runtime connector libs
 #     (/opt/bar2-runtime/{lib,preload}) are ALL baked into the image at
 #     build time (self-built, see scripts/build_bar2.sh) -- no NFS mount
-#     needed for any of this anymore (resolved 2026-07-05, see Dockerfile.rdu
-#     header). Cluster topology (CONTROL_PLANE_IP, GPU_ROCE_IP, ...) and
-#     model config (MODEL, PEF, ...) are still passed in as env vars, not
-#     baked in, since both vary independently of the image build -- MODEL/PEF
-#     point at NFS paths for the checkpoint/compiled-graph data, which this
-#     image doesn't and shouldn't try to embed.
+#     needed for any of it. Cluster topology (CONTROL_PLANE_IP, GPU_ROCE_IP,
+#     ...) and model config (MODEL, PEF, ...) are still passed in as env
+#     vars, not baked in, since both vary independently of the image build --
+#     MODEL/PEF point at NFS paths for the checkpoint/compiled-graph data,
+#     which this image doesn't and shouldn't try to embed.
 set -euo pipefail
 export PYTHONNOUSERSITE=1
 

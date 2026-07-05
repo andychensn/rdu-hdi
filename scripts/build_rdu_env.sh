@@ -2,11 +2,10 @@
 # Build the complete RDU-side environment for rdu-hdi: fast-coe source,
 # UCX/NIXL (from source), the vllm+cpu wheel, and the final .venv_rdu.
 #
-# Consolidates what used to be 4 separate scripts (fetch_fast_coe.sh,
-# build_vllm_cpu_wheel.sh, build_rdu_ucx_nixl.sh, build_rdu_venv.sh) into
-# one, 2026-07-03 — they were always run together in a fixed order and
+# One script, not split across several — fetching fast-coe, building
+# UCX/NIXL, and building the venv always run together in a fixed order, and
 # splitting the "extra deps" venv step into its own script previously
-# caused it to be silently forgotten (see git history / PARITY_PLAN.md).
+# caused it to be silently forgotten before a launch.
 #
 # Two phases, matching every other RDU build script in this repo:
 #
@@ -49,12 +48,10 @@ MODE="${1:-both}"   # --fetch-only | --build-only | both
 # ═══════════════════════════════════════════════════════════════════════════
 # Phase 1: fetch everything (login node, needs internet)
 #
-# (Note 2026-07-03: empirically, sc3-s339 DOES have internet access — `curl
-# https://pypi.org`, `pip install`, and `git clone` all work fine from it.
-# The two-phase split below predates that finding and isn't a hard
-# requirement anymore, but it's a proven-safe pattern already in place —
-# kept as-is rather than churned for no functional benefit. Don't assume
-# "no internet" as a hard constraint elsewhere without checking first.)
+# (Note: sc3-s339 does have internet access — curl/pip/git all work fine
+# from it. The two-phase split below isn't a hard requirement, but it's a
+# proven-safe pattern kept as-is. Don't assume "no internet" as a hard
+# constraint on RDU nodes elsewhere without checking first.)
 # ═══════════════════════════════════════════════════════════════════════════
 fetch_sources() {
     echo "=== Phase 1: Fetching sources and wheels (login node, needs internet) ==="
@@ -93,16 +90,11 @@ fetch_sources() {
         done
     fi
 
-    # bar2-self-build compat: coe_api built from SambaNova/software
-    # josephp/nova/scattergather_integration removed RDUTensor.dtype
-    # (get_tensor(name).dtype) — present on jayr's older coe_api this
-    # FAST_COE_COMMIT pin was originally validated against, but gone from
-    # josephp's branch's RDUTensor (confirmed via dir(coe_api.RDUTensor) on
-    # both; .shape is still present on both). Patch _pef_dtype to try
-    # Checkpoint.get_symbol_properties(name).dtype first (always present,
-    # metadata-only — no hardware copy, unlike RDUTensor.to_torch_tensor()),
-    # falling back to the direct attribute for coe_api builds that still
-    # have it. See scripts/build_bar2.sh and docs/local/DOCKERIZE_BAR2_PLAN.md.
+    # coe_api compat: not every coe_api build exposes RDUTensor.dtype, so
+    # fast-coe's pipeline.py should prefer Checkpoint.get_symbol_properties
+    # (name).dtype (always present, metadata-only — no hardware copy, unlike
+    # RDUTensor.to_torch_tensor()) and fall back to the direct attribute only
+    # for coe_api builds that have it. See scripts/build_bar2.sh.
     PEF_DTYPE_PATCH="$REPO_ROOT/patches/rdu/fast_coe_pef_dtype_symbol_properties.patch"
     if grep -q "get_symbol_properties(symbol_name).dtype" "$FAST_COE_SRC/server/rdu_manifest/pipeline.py" 2>/dev/null; then
         echo "  pipeline.py: pef_dtype symbol_properties fallback already present ✅"
@@ -174,15 +166,10 @@ fetch_sources() {
     # s339 has libnuma.so.1 (runtime) but NOT libnuma.so (needs numactl-devel).
     # cmake's find_library(numa) correctly returns NOT FOUND for missing .so → NUMA disabled.
     #
-    # NOTE 2026-07-03: this used to be two separate `python3` invocations — a
-    # bare `python3 << 'PYEOF'` heredoc (no argv, so its own `sys.argv[1]`
-    # crashed with IndexError every time) followed by a second `python3 -
-    # <path>` with the real argument but no heredoc attached (would hang on
-    # stdin if ever reached). Under `set -e` the first one aborted the whole
-    # script before Patch 5 (mla_decode.cpp removal, needed to avoid an
-    # AVX-512 compile failure on this AVX2-only CPU) ever ran. Fixed by
-    # passing the path as an argument to the SAME invocation that reads its
-    # script from the heredoc.
+    # NOTE: pass the path as an argument to the SAME invocation that reads
+    # its script from the heredoc — a bare `python3 << 'PYEOF'` heredoc has
+    # no argv, so a separate `sys.argv[1]`-reading invocation without the
+    # heredoc attached would hang on stdin instead of receiving it.
     python3 - "$VLLM_SRC/cmake/cpu_extension.cmake" << 'PYEOF' || echo "    NUMA cmake patch: failed (may already be patched)"
 import sys
 content = open(sys.argv[1]).read()
@@ -354,14 +341,10 @@ PYEOF
     # these have a pinned version; --only-binary=:all: keeps them prebuilt
     # wheels rather than sdists needing a compiler.
     #
-    # NOTE 2026-07-03: this whole fetch step was missing entirely until a
-    # true from-scratch reproducibility test caught it — wheelhouse/ had
-    # accumulated all of these from ad-hoc, untracked `pip download`/`pip
-    # install` commands run directly during earlier debugging sessions,
-    # never wiped, so the gap was invisible until wheelhouse/ was deleted
-    # for real. If you add a new install_whl(...) call to build_venv(),
-    # add the matching package name here too, or it will only "work" for
-    # as long as your own wheelhouse/ happens to already have it cached.
+    # If you add a new install_whl(...) call to build_venv(), add the
+    # matching package name here too — otherwise it only "works" for as
+    # long as your own wheelhouse/ happens to already have it cached, and
+    # silently breaks on the next genuinely clean rebuild.
     for pkg in \
         pybase64  blake3  depyf  lark  einops  cloudpickle  loguru \
         diskcache  msgspec  ninja  cachetools  anyio  httpcore  httpx \
@@ -396,11 +379,11 @@ PYEOF
     # checks at import time that its installed pydantic_core is EXACTLY the
     # version it was built against (SystemError if not) — independently
     # fetching "whatever's latest" for both packages will eventually drift
-    # out of sync the moment either gets a new PyPI release (caught for
-    # real 2026-07-03: pydantic 2.13.4 required pydantic_core==2.46.4, but
-    # an independently-fetched "latest" pydantic_core was already 2.47.0).
-    # Derive the exact required version from the pydantic wheel's own
-    # metadata instead of guessing a version number that will go stale.
+    # out of sync the moment either gets a new PyPI release (e.g. pydantic
+    # 2.13.4 requires pydantic_core==2.46.4 exactly, while an independently
+    # fetched "latest" pydantic_core could already be 2.47.0). Derive the
+    # exact required version from the pydantic wheel's own metadata instead
+    # of guessing a version number that will go stale.
     if ! find "$WHEELHOUSE" -name "pydantic_core-*.whl" 2>/dev/null | grep -q .; then
         PYDANTIC_WHL=$(find "$WHEELHOUSE" -name "pydantic-*.whl" 2>/dev/null | head -1)
         if [ -n "$PYDANTIC_WHL" ]; then
@@ -742,17 +725,11 @@ build_venv() {
         echo "  direct_register_custom_op: early-return guard added ✅"
     fi
 
-    # NOTE: a REGISTER_CONSUMER_MSG patch for chunk-overlap KV transfer
-    # (VLLM_PD_CHUNK_OVERLAP=1) used to be applied here. Removed 2026-07-03 —
-    # its patch file had already gone stale (silently making this whole step
-    # a no-op with no error, discovered while fixing an unrelated patch-path
-    # bug below), and launch/rdu_decode.sh + launch/gpu_prefill.sh both
-    # hardcode VLLM_PD_CHUNK_OVERLAP=0 — the feature isn't used. Deleted
-    # outright (not kept as a "just in case" reference) since it was a
-    # never-verified hand-reconstruction, the same category of artifact that
-    # patches/gpu/nixl_connector.py replaced on the GPU producer side — if
-    # this feature is ever revived, go find hdi's actual consumer-side
-    # implementation instead of trusting this old reconstruction.
+    # NOTE: no REGISTER_CONSUMER_MSG patch for chunk-overlap KV transfer
+    # (VLLM_PD_CHUNK_OVERLAP=1) is applied here — launch/rdu_decode.sh and
+    # launch/gpu_prefill.sh both hardcode VLLM_PD_CHUNK_OVERLAP=0, so the
+    # feature isn't used. If this feature is ever revived, use hdi's actual
+    # consumer-side implementation rather than hand-reconstructing one.
 
     # nixl_connector.py (stock vLLM, not vllm-rdu): _pop_done_transfers treats a
     # telemetry-retrieval failure as a transfer failure, even when

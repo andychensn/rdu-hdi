@@ -7,31 +7,20 @@ SN40L RDU handles decode, coordinated by NVIDIA Dynamo.
 
 ## Architecture
 
-```
-vllm/vllm-openai (Docker image)  ─────────  GPU prefill worker
-  + andychensn/ucx  (bnxt_re RoCE)          │ NIXL KV cache transfer
-  + andychensn/nixl                          │
-  + vllm nixl_connector patch                │
-  + ai-dynamo (base package only)            │
-                                             │
-sambanova/fast-coe's vllm-rdu             ──  RDU decode worker
-  (Docker image, Dockerfile.rdu)            │   (hdi's proven connector/engine,
-  + andychensn/ucx + andychensn/nixl         │    not the retired standalone
-    (repo-built, rdu-ucx-install/)          │    andychensn/vllm-rdu fork)
-  + coe_api/rdu_engine + BAR2 runtime        │
-    connector libs (self-built, baked in)   │
-  + ai-dynamo (base package only)            │
-                                             │
-etcd + NATS + dynamo.frontend             ──  Control plane
-  (Docker image, Dockerfile.control-plane)   │   (login node)
+```mermaid
+flowchart LR
+    CP["Control plane (Docker)<br/>etcd + NATS + dynamo.frontend<br/>login node"]
+    GPU["GPU prefill worker (Docker)<br/>vllm/vllm-openai + UCX/NIXL<br/>+ vllm nixl_connector patch<br/>+ ai-dynamo"]
+    RDU["RDU decode worker (Docker)<br/>fast-coe vllm-rdu + UCX/NIXL<br/>+ coe_api/rdu_engine + BAR2 runtime<br/>+ ai-dynamo"]
+
+    CP <-->|discovery / routing| GPU
+    CP <-->|discovery / routing| RDU
+    GPU -->|NIXL KV cache transfer| RDU
 ```
 
-`coe_api`/BAR2 runtime connector libs are **self-built and baked directly into the RDU Docker
-image** — built from a single pinned commit of `josephp/nova/ddr_alloc_mem2mem_AND_bar2_mappings`
-(see `config/versions.env`'s `SOFTWARE_REPO_*` comment and `scripts/build_bar2.sh`), no NFS mount
-needed at container runtime. (An earlier self-build attempt against the wrong branch/commit hit a
-hard ABI/hardware blocker — resolved 2026-07-05 once the actual working commit was identified
-directly from the engineer whose NFS tree this replaces.)
+`coe_api`/BAR2 runtime connector libs are **self-built from a pinned commit of SambaNova's
+software repo and baked directly into the RDU Docker image** (`scripts/build_bar2.sh`, pin in
+`config/versions.env`) — no NFS mount needed at container runtime.
 
 Both sides install plain `ai-dynamo`/`ai-dynamo-runtime`, never the `[vllm]` extra — that extra
 pulls in vllm 0.20.x as a dependency, which breaks MiniMax-M2.7 (both sides pin vllm 0.16.0
@@ -118,8 +107,8 @@ snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
 
 ## Per-session launch
 
-**Docker is the supported path for all three components** (control plane, GPU prefill, RDU decode)
-as of 2026-07-05. Build the images once:
+**Docker is the supported path for all three components** (control plane, GPU prefill, RDU decode).
+Build the images once:
 
 ```bash
 bash scripts/build_docker_control_plane.sh   # -> $CONTROL_PLANE_IMAGE (config/cluster.env)
@@ -208,8 +197,7 @@ unless proven otherwise.
 
 ## NFS dependencies
 
-Confirmed by a full wipe-and-rebuild reproducibility test (2026-07-05): the only genuinely
-external assets this stack reads from a network filesystem at runtime are:
+The only genuinely external assets this stack reads from a network filesystem at runtime are:
 
 1. **The model checkpoint** — split across two paths for the two sides: `MODEL` (`config/model.env`,
    `/import/...`) is read by GPU prefill and by RDU decode's tokenizer/config path (RDU loads
@@ -237,9 +225,9 @@ GPU side (`Dockerfile.gpu`, `patches/gpu/`):
 - **dynamo.vllm protocol patch**: `ai-dynamo 1.2.1` imports `MultiModalUUIDDict` from vllm (added in 0.20.x). Patched inline in `Dockerfile.gpu` to be conditional (same fix as the RDU side below, implemented independently rather than sharing a file — keep both in sync by hand if this logic ever changes).
 
 RDU side (`scripts/build_rdu_env.sh`, `patches/rdu/`):
-- **dynamo.vllm protocol patch**: same `MultiModalUUIDDict` gap as above, applied here via `patches/rdu/dynamo_multimodal_protocol.patch`. The RDU side does *not* need the `REGISTER_CONSUMER_MSG` patch — `VLLM_PD_CHUNK_OVERLAP` is hardcoded to `0` in `launch/rdu_decode.sh` and `launch/gpu_prefill.sh`, so the feature it enables is never used (the RDU-side attempt to apply this patch was a permanent no-op and was deleted outright 2026-07-03, not kept as a "just in case" reference — it was a never-verified hand-reconstruction, the same category of artifact `patches/gpu/nixl_connector.py` replaced above; if this feature is ever revived, find hdi's actual consumer-side implementation instead).
+- **dynamo.vllm protocol patch**: same `MultiModalUUIDDict` gap as above, applied here via `patches/rdu/dynamo_multimodal_protocol.patch`. The RDU side does *not* need the `REGISTER_CONSUMER_MSG` patch — `VLLM_PD_CHUNK_OVERLAP` is hardcoded to `0` in `launch/rdu_decode.sh` and `launch/gpu_prefill.sh`, so the feature it enables is never used. If this feature is ever revived, use hdi's actual consumer-side implementation rather than reconstructing one.
 - **RDU torch compat**: s339 has `torch 2.2.0+sn`; vllm 0.16.0 uses torch 2.4+ APIs. Two files patched by `build_rdu_env.sh`, one of them (`patches/rdu/vllm_env_override_torch22x.py`) a full-file replacement of vllm's own `env_override.py`. Long-term fix: RDU Docker image with matching torch.
-- **rdma-core devel headers**: s339 ships `libibverbs`/`librdmacm` runtime `.so.1` but not the `-devel` headers, and there's no package-manager access to install them. `build_rdu_env.sh --fetch-only` downloads a pinned, SHA256-verified header subset instead of searching the filesystem for them (a prior version searched all of `/import`, which took hours on this NFS mount).
+- **rdma-core devel headers**: s339 ships `libibverbs`/`librdmacm` runtime `.so.1` but not the `-devel` headers, and there's no package-manager access to install them. `build_rdu_env.sh --fetch-only` downloads a pinned, SHA256-verified header subset instead of searching the filesystem for them.
 
 ## Component repos
 
@@ -247,7 +235,7 @@ RDU side (`scripts/build_rdu_env.sh`, `patches/rdu/`):
 |------|---------|
 | [`andychensn/ucx`](https://github.com/andychensn/ucx) | UCX 1.22 + SN RDMA patches (used by both GPU and RDU sides) |
 | [`andychensn/nixl`](https://github.com/andychensn/nixl) | NIXL + SN UCX integration |
-| `sambanova/fast-coe` | hdi's proven vllm-rdu connector/engine (`server/vllm-rdu`), pinned by commit in `config/versions.env`. Supersedes the retired standalone `andychensn/vllm-rdu` fork — see `docs/local/PARITY_PLAN.md`. |
+| `sambanova/fast-coe` | hdi's proven vllm-rdu connector/engine (`server/vllm-rdu`), pinned by commit in `config/versions.env`. Supersedes the retired standalone `andychensn/vllm-rdu` fork. |
 | [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | Source of the GPU-side `REGISTER_CONSUMER_MSG` producer file |
 
 ## Docker GPU prefill — notes

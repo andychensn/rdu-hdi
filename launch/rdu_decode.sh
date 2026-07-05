@@ -66,7 +66,7 @@ if [[ "${1:-}" == "--inner" ]]; then
     source "$RDU_VENV/bin/activate"
 
     # BAR2_INSTALL is only needed when coe_api/rdu_engine come from an
-    # ad-hoc NFS tree (PYTHONPATH-based, e.g. jayr's bazel-install layout).
+    # ad-hoc NFS tree (a PYTHONPATH-based bazel-install layout).
     # When self-built via scripts/build_bar2.sh, coe_api/rdu_engine are
     # pip-installed directly into $RDU_VENV's own site-packages instead --
     # BAR2_INSTALL should be left empty/unset in that case. Keeping

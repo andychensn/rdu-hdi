@@ -11,8 +11,8 @@
 #     — built via scripts/build_rdu_env.sh --fetch-only / --build-only
 #   - wheelhouse/sambanova_{rdu_engine_api,coe_api}-*.whl and
 #     rdu-runtime-install/{lib,preload}/ — self-built coe_api/BAR2 runtime,
-#     built via scripts/build_bar2.sh --fetch-only / --build-only (2026-07-05:
-#     now baked into the image, no NFS mount needed at container runtime)
+#     built via scripts/build_bar2.sh --fetch-only / --build-only, baked
+#     directly into the image (no NFS mount needed at container runtime)
 #
 # Usage:
 #   bash scripts/build_docker_rdu.sh             # builds + pushes with default tag

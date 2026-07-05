@@ -1,27 +1,14 @@
 # RDU decode image for rdu-hdi disaggregated inference.
 #
 # Bakes in: /opt/sambanova's Python 3.11 + torch==2.2.0+sn (from the base
-# image — provenance not fully self-traced, see docs/local/DOCKERIZE_BAR2_PLAN.md
-# §4.4), vllm+cpu + ai-dynamo + fast-coe's vllm-rdu + UCX/NIXL (COPIED as
+# image), vllm+cpu + ai-dynamo + fast-coe's vllm-rdu + UCX/NIXL (COPIED as
 # pre-built binary artifacts from wheelhouse/ and rdu-ucx-install/), AND
 # coe_api/rdu_engine + the BAR2 runtime connector libs (self-built, see
 # scripts/build_bar2.sh) from wheelhouse/ and rdu-runtime-install/{lib,preload}.
-#
-# RESOLVED (2026-07-05): earlier revisions of this image deferred coe_api/
-# BAR2 to NFS mounts at container runtime (BAR2_INSTALL/BAR2_RUNTIME_LIBS/
-# BAR2_PRELOAD), because self-building against two candidate SambaNova/
-# software branches had hit a hard ABI/hardware blocker. That blocker
-# turned out to be the wrong branch/commit entirely -- jayr's real
-# BAR2_INSTALL commit (confirmed directly with him) plus his one local,
-# previously-uncommitted patch (patches/software-repo/coe_api_rdutensor_dtype.patch)
-# builds and runs correctly, validated end-to-end on real hardware with zero
-# crashes across a full benchmark sweep. See config/versions.env's
-# SOFTWARE_REPO_* comment for the exact commit and docs/local/DOCKERIZE_BAR2_PLAN.md
-# for the full history. This image now bakes in ALL of it -- no NFS mount
-# needed at runtime for coe_api/BAR2 (the model checkpoint and PEF still are,
-# since those are large data files this image doesn't and shouldn't embed).
-# The bare-metal launch/rdu_decode.sh path is deprecated in favor of this
-# image (see that file's own header).
+# No NFS mount is needed at runtime for any of it (the model checkpoint and
+# PEF still are, since those are large data files this image doesn't and
+# shouldn't embed). The bare-metal launch/rdu_decode.sh path is deprecated
+# in favor of this image (see that file's own header).
 #
 # RUN this image with --net=host (RoCE IP visibility, matching
 # gpu_prefill.sh's own --net=host requirement) and explicit device
@@ -76,12 +63,10 @@ ENV UCX_MODULE_DIR=/opt/rdu-ucx/lib/ucx
 
 # ── BAR2 runtime connector libs (self-built, see scripts/build_bar2.sh) ────
 # coe_api/rdu_engine's compiled extension dynamically links against
-# libc_samba_runtime.so/libcpp_samba_runtime.so at IMPORT time (confirmed via
-# scripts/verify_bar2_import.sh needing LD_LIBRARY_PATH set even for a bare
-# `import coe_api`, not just at actual RDU session creation) -- so these must
-# be on LD_LIBRARY_PATH before rdu-decode-install-deps.sh's own import
-# validation below runs. Baked in directly (27 .so files from the runtime
-# 'graph' CMake target group) -- no NFS mount needed at runtime anymore.
+# libc_samba_runtime.so/libcpp_samba_runtime.so at IMPORT time — not just at
+# actual RDU session creation — so these must be on LD_LIBRARY_PATH before
+# rdu-decode-install-deps.sh's own import validation below runs. Baked in
+# directly (27 .so files from the runtime 'graph' CMake target group).
 COPY rdu-runtime-install/lib/ /opt/bar2-runtime/lib/
 COPY rdu-runtime-install/preload/ /opt/bar2-runtime/preload/
 # rdu_engine also transitively needs libmpi.so.12 (mpich) and a few abseil/
