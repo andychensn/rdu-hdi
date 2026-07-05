@@ -8,7 +8,6 @@ rdu-build-src/
 logs/
 benchmark_results/
 InferenceX/
-.venv_rdu/
 .gpu_cache/
 .rdu_cache/
 .etcd_data/

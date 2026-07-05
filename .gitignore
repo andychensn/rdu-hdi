@@ -1,8 +1,8 @@
 # Build artifacts
 ucx-install/
 rdu-ucx-install/
-.venv_rdu/
 .venv_bench/
+.venv_rdu/
 .gpu_cache/
 .rdu_cache/
 .etcd_data/

@@ -1,20 +1,16 @@
 #!/usr/bin/env bash
 # Install the RDU decode Python stack into the base image's own
 # /opt/sambanova python3.11 (no separate venv — the container itself is
-# the isolation boundary, so this achieves the same net effect as
-# .venv_rdu's `--system-site-packages` flag: torch/mpich come from the
-# base image, everything else installs alongside them).
-#
-# Mirrors scripts/build_rdu_env.sh's build_venv() function, adapted to:
-#   - skip building UCX/NIXL/vllm+cpu from source — this Dockerfile COPYs
-#     the already-built artifacts (rdu-ucx-install/, wheelhouse/*.whl)
-#     instead, since they're pure binary artifacts already validated on
-#     this node family.
-#   - operate on the base image's system python, not a nested venv.
-#   - self-build and install coe_api/rdu_engine as wheels directly (see the
-#     "coe_api/rdu_engine" section below and scripts/build_bar2.sh) — no NFS
-#     mount involved; the BAR2 runtime connector libs are COPYed into the
-#     image separately by Dockerfile.rdu (rdu-runtime-install/{lib,preload}).
+# the isolation boundary: torch/mpich come from the base image, everything
+# else installs alongside them).
+#   - UCX/NIXL/vllm+cpu are not built here — this Dockerfile COPYs the
+#     already-built artifacts (rdu-ucx-install/, wheelhouse/*.whl) instead,
+#     since they're pure binary artifacts already validated on this node
+#     family (see scripts/build_rdu_env.sh).
+#   - coe_api/rdu_engine are self-built and installed as wheels directly
+#     (see the "coe_api/rdu_engine" section below and scripts/build_bar2.sh);
+#     the BAR2 runtime connector libs are COPYed into the image separately
+#     by Dockerfile.rdu (rdu-runtime-install/{lib,preload}).
 #
 # Run inside the Dockerfile.rdu build (working dir: repo root, with
 # wheelhouse/, rdu-ucx-install/, patches/rdu/, fast-coe/ all present).

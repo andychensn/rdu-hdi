@@ -103,9 +103,9 @@ bash scripts/fetch_vendor.sh
 # 3. Build GPU prefill Docker image (~20 min, login node, no GPU required)
 bash scripts/build_docker_gpu.sh
 
-# 4. Build the whole RDU environment: fast-coe source, UCX/NIXL from source,
-#    the +cpu vllm wheel, and the final .venv_rdu — all in one script, two
-#    phases (login node needs internet; RDU-node build takes ~5 min total).
+# 4. Fetch fast-coe source and build UCX/NIXL + the +cpu vllm wheel from
+#    source — all in one script, two phases (login node needs internet;
+#    RDU-node build takes ~5 min total).
 bash scripts/build_rdu_env.sh --fetch-only
 snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
     --allow-local-lib-python --reservation "$RDU_RESERVATION" \
