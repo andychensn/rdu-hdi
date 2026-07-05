@@ -34,7 +34,6 @@ All external dependencies are pinned to exact commit SHAs in `config/versions.en
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/fetch_vendor.sh` | Fetch etcd + nats-server binaries |
 | `scripts/build_rdu_env.sh` | Fetch/build fast-coe, UCX, NIXL, and the vllm+cpu wheel (RDU side) |
 | `scripts/build_bar2.sh` | Self-build coe_api/rdu_engine + the BAR2 runtime connector libs |
 | `scripts/build_docker_gpu.sh` | Build + push the GPU prefill Docker image |
@@ -97,13 +96,10 @@ source config/model.env
 git clone https://github.com/SemiAnalysisAI/InferenceX.git "$REPO/InferenceX"
 git -C "$REPO/InferenceX" checkout "$INFERENCEX_COMMIT"
 
-# 2. Fetch etcd + nats-server binaries (SHA256-verified)
-bash scripts/fetch_vendor.sh
-
-# 3. Build GPU prefill Docker image (~20 min, login node, no GPU required)
+# 2. Build GPU prefill Docker image (~20 min, login node, no GPU required)
 bash scripts/build_docker_gpu.sh
 
-# 4. Fetch fast-coe source and build UCX/NIXL + the +cpu vllm wheel from
+# 3. Fetch fast-coe source and build UCX/NIXL + the +cpu vllm wheel from
 #    source — all in one script, two phases (login node needs internet;
 #    RDU-node build takes ~5 min total).
 bash scripts/build_rdu_env.sh --fetch-only
@@ -112,7 +108,7 @@ snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
     --pef "$PEF" --timeout "$RDU_TIMEOUT" -o logs/build_rdu_env.log \
     -- bash scripts/build_rdu_env.sh --build-only
 
-# 5. Self-build coe_api/rdu_engine + the BAR2 runtime connector libs (required
+# 4. Self-build coe_api/rdu_engine + the BAR2 runtime connector libs (required
 #    by build_docker_rdu.sh below) — same two-phase pattern.
 bash scripts/build_bar2.sh --fetch-only
 snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \

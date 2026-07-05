@@ -4,9 +4,6 @@ rdu-ucx-install/
 .venv_bench/
 .venv_rdu/
 .gpu_cache/
-.rdu_cache/
-.etcd_data/
-.etcd_data2/
 build/
 *.log
 # snrdu auto-generated batch-script artifacts (job-name-based, no fixed prefix)

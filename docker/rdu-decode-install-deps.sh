@@ -159,27 +159,6 @@ PYEOF
     echo "  nixl_connector.py: NIXL_ERR_NO_TELEMETRY false-failure patch applied"
 fi
 
-# torch 2.2.x compat shims — defensive re-application. The +cpu wheel
-# already has these baked in from fetch_sources()'s pre-build patching;
-# this just guards against a stale unpatched copy surviving in the wheel.
-COMPAT_SHIM="/build/patches/rdu/vllm_env_override_torch22x.py"
-ENV_OVERRIDE=$(find "$SITE_PACKAGES" -name "env_override.py" -path "*/vllm/*" 2>/dev/null | head -1)
-if [ -f "$COMPAT_SHIM" ] && [ -n "$ENV_OVERRIDE" ]; then
-    cp "$COMPAT_SHIM" "$ENV_OVERRIDE"
-    echo "  env_override.py: torch 2.2.x compat shim applied"
-fi
-TORCH_UTILS=$(find "$SITE_PACKAGES" -name "torch_utils.py" -path "*/vllm/*" 2>/dev/null | head -1)
-if [ -n "$TORCH_UTILS" ] && grep -q "^from torch.library import Library, infer_schema$" "$TORCH_UTILS" 2>/dev/null; then
-    sed -i 's/^from torch.library import Library, infer_schema$/try:\n    from torch.library import Library, infer_schema\n    _infer_schema_available = True\nexcept ImportError:\n    from torch.library import Library\n    _infer_schema_available = False\n    def infer_schema(func, *args, **kwargs): return ""/' "$TORCH_UTILS"
-    echo "  torch_utils.py: _infer_schema_available flag added"
-fi
-if [ -n "$TORCH_UTILS" ] && grep -q "^def direct_register_custom_op" "$TORCH_UTILS" 2>/dev/null && \
-   ! grep -A3 "^def direct_register_custom_op" "$TORCH_UTILS" | grep -q "_infer_schema_available"; then
-    sed -i '/^def direct_register_custom_op/,/^    """/{/^    """/i\    if not _infer_schema_available:\n        return
-    }' "$TORCH_UTILS"
-    echo "  direct_register_custom_op: early-return guard added"
-fi
-
 echo "=== vllm-rdu (fast-coe, editable install) ==="
 [ -d "$FAST_COE_SRC/server/vllm-rdu" ] || { echo "ERROR: $FAST_COE_SRC/server/vllm-rdu not found"; exit 1; }
 $PIP install -q -e "$FAST_COE_SRC/server/vllm-rdu"

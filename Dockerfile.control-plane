@@ -25,9 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── etcd + nats-server binaries ───────────────────────────────────────────────
-# Fetched and SHA256-verified exactly like scripts/fetch_vendor.sh does for
-# the bare-metal launch path, so both paths pull the identical, pinned
-# release artifact.
+# Fetched and SHA256-verified against the exact pinned release (see
+# config/versions.env's ETCD_*/NATS_* vars).
 ARG ETCD_VERSION
 ARG ETCD_SHA256
 ARG NATS_VERSION

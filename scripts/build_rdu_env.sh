@@ -241,22 +241,6 @@ PYEOF
         echo "  NIXL already present"
     fi
 
-    # Fallback plain vllm wheel — only used if the vllm+cpu source build (above)
-    # somehow isn't available yet; docker/rdu-decode-install-deps.sh's wheel
-    # selection always prefers the +cpu wheel when present. Rename
-    # manylinux→linux_x86_64 to bypass the glibc 2.31 check on RHEL8/s339.
-    VLLM_WHL=$(find "$WHEELHOUSE" -name "vllm-*linux_x86_64.whl" 2>/dev/null | head -1 || true)
-    if [ -z "$VLLM_WHL" ]; then
-        echo "  Downloading fallback vllm==$VLLM_VERSION wheel..."
-        python3.12 -m pip download "vllm==$VLLM_VERSION" --no-deps --dest "$WHEELHOUSE" \
-            --python-version 311 --platform manylinux_2_31_x86_64 2>&1 | tail -3
-        MANYLINUX="$WHEELHOUSE/vllm-${VLLM_VERSION}-cp38-abi3-manylinux_2_31_x86_64.whl"
-        [ -f "$MANYLINUX" ] && mv "$MANYLINUX" "$WHEELHOUSE/vllm-${VLLM_VERSION}-cp38-abi3-linux_x86_64.whl"
-        echo "  fallback vllm wheel ✅"
-    else
-        echo "  fallback vllm wheel already present: $VLLM_WHL"
-    fi
-
     # gguf + regex — needed by vllm.transformers_utils.gguf_utils (loaded at import time).
     # gguf is a pure-Python GGUF model reader; regex is its C-ext string library.
     # Neither is in the SambaNova system Python. Not used at runtime for HF models,

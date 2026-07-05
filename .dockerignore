@@ -9,8 +9,5 @@ logs/
 benchmark_results/
 InferenceX/
 .gpu_cache/
-.rdu_cache/
-.etcd_data/
-.etcd_data2/
 docs/
 fast-coe/.git/
