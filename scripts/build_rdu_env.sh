@@ -128,13 +128,21 @@ fetch_sources() {
         echo "    torch_utils.py: infer_schema import pattern not found (already patched?)"
     fi
 
-    # Add early-return guard to direct_register_custom_op if not already present
+    # Add early-return guard to direct_register_custom_op if not already present.
+    # NOTE: the guard check must be scoped to the function body specifically
+    # (grep -A3 right after the def line) -- a whole-file `grep -q
+    # _infer_schema_available` always matches because Patch 2 above already
+    # added that flag's *declaration* earlier in the file, which silently
+    # skipped ever adding this guard and left direct_register_custom_op
+    # calling my_lib.define(op_name + "") on torch 2.2.x, crashing with
+    # "RuntimeError: Tried to parse a function schema but only the operator
+    # name was given" (found via a live Docker build failure).
     if grep -q "^def direct_register_custom_op" "$TORCH_UTILS" 2>/dev/null && \
-       ! grep -q "_infer_schema_available" "$TORCH_UTILS" 2>/dev/null; then
+       ! grep -A3 "^def direct_register_custom_op" "$TORCH_UTILS" | grep -q "_infer_schema_available"; then
         sed -i '/^def direct_register_custom_op/,/^    """/{/^    """/{i\    if not _infer_schema_available:\n        return
 }}' "$TORCH_UTILS"
         echo "    direct_register_custom_op: early-return guard added ✅"
-    elif grep -q "_infer_schema_available" "$TORCH_UTILS" 2>/dev/null; then
+    else
         echo "    direct_register_custom_op: guard already present ✅"
     fi
 
