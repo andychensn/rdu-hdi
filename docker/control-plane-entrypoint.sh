@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Control-plane container entrypoint: etcd + NATS + Dynamo HTTP frontend.
-# Mirrors launch/control_plane.sh's process set, adapted for a single
-# container: etcd/NATS run in the background, the frontend runs in the
-# foreground as the container's main process (so `docker stop`/k8s
-# termination signals reach it directly), and a trap tears down the
+# Control-plane container entrypoint: etcd + NATS + Dynamo HTTP frontend, one
+# process set per container: etcd/NATS run in the background, the frontend
+# runs in the foreground as the container's main process (so `docker stop`/
+# k8s termination signals reach it directly), and a trap tears down the
 # background processes on exit so the container doesn't leave orphans
 # behind on a shared node.
 set -euo pipefail

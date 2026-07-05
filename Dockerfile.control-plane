@@ -1,7 +1,7 @@
 # Control-plane image for rdu-hdi disaggregated inference: etcd + NATS +
-# Dynamo HTTP frontend, all three bundled into one lightweight image (no
-# RDU/GPU/NFS dependency — matches launch/control_plane.sh's process set,
-# which this image's entrypoint (docker/control-plane-entrypoint.sh) mirrors).
+# Dynamo HTTP frontend, all three bundled into one lightweight image with no
+# RDU/GPU/NFS dependency (see docker/control-plane-entrypoint.sh for the
+# process set).
 #
 # Build (from login node):
 #   bash scripts/build_docker_control_plane.sh
@@ -49,9 +49,8 @@ RUN mkdir -p /opt/vendor/bin /tmp/vendor-fetch && cd /tmp/vendor-fetch && \
     cd / && rm -rf /tmp/vendor-fetch
 
 # ── ai-dynamo (dynamo.frontend) + runtime deps ────────────────────────────────
-# Matches launch/control_plane.sh's .venv_cp bootstrap exactly (same package
-# list, same "no [vllm] extra" reasoning as Dockerfile.gpu: the frontend only
-# needs dynamo.frontend, not the vllm-coupled extras).
+# No [vllm] extra, same reasoning as Dockerfile.gpu: the frontend only needs
+# dynamo.frontend, not the vllm-coupled extras.
 ARG DYNAMO_VERSION
 RUN pip install --no-cache-dir \
         "ai-dynamo==${DYNAMO_VERSION}" "ai-dynamo-runtime==${DYNAMO_VERSION}" \

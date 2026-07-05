@@ -1,8 +1,6 @@
 # Build artifacts
 ucx-install/
 rdu-ucx-install/
-.venv_gpu/
-.venv_cp/
 .venv_rdu/
 .venv_bench/
 .gpu_cache/
@@ -27,7 +25,6 @@ wheelhouse/
 benchmark_results/
 
 # Runtime-only repos — cloned at setup time (see README.md)
-vllm-rdu.retired-andychensn-fork/
 fast-coe/
 InferenceX/
 vendor/bin/

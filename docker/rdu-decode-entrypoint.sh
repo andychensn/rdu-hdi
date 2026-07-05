@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
-# RDU decode container entrypoint. Adapts launch/rdu_decode.sh's --inner
-# block (the part that actually runs `python -m dynamo.vllm`) for a
-# container context:
-#   - No venv activation — /opt/sambanova/bin/python3.11 is already on
-#     PATH, with everything scripts/build_rdu_env.sh would have installed
-#     into .venv_rdu baked directly into this image's site-packages
-#     (docker/rdu-decode-install-deps.sh, run at image build time).
-#   - UCX is at a fixed path baked into the image (/opt/rdu-ucx), not
-#     resolved relative to $REPO_ROOT.
+# RDU decode container entrypoint -- runs `python -m dynamo.vllm` in
+# disaggregated decode mode.
+#   - /opt/sambanova/bin/python3.11 is used directly; everything
+#     scripts/build_rdu_env.sh / docker/rdu-decode-install-deps.sh installs
+#     lives in its site-packages (no venv).
+#   - UCX is at a fixed path baked into the image (/opt/rdu-ucx).
 #   - fast-coe is at a fixed path baked into the image (/build/fast-coe).
 #   - coe_api/rdu_engine (pip-installed) and the BAR2 runtime connector libs
-#     (/opt/bar2-runtime/{lib,preload}) are ALL baked into the image at
-#     build time (self-built, see scripts/build_bar2.sh) -- no NFS mount
-#     needed for any of it. Cluster topology (CONTROL_PLANE_IP, GPU_ROCE_IP,
-#     ...) and model config (MODEL, PEF, ...) are still passed in as env
-#     vars, not baked in, since both vary independently of the image build --
-#     MODEL/PEF point at NFS paths for the checkpoint/compiled-graph data,
-#     which this image doesn't and shouldn't try to embed.
+#     (/opt/bar2-runtime/{lib,preload}) are baked into the image at build
+#     time (self-built, see scripts/build_bar2.sh). Cluster topology
+#     (CONTROL_PLANE_IP, GPU_ROCE_IP, ...) and model config (MODEL, PEF, ...)
+#     are passed in as env vars instead, since both vary independently of
+#     the image build -- MODEL/PEF point at NFS paths for the
+#     checkpoint/compiled-graph data, which this image doesn't embed.
 set -euo pipefail
 export PYTHONNOUSERSITE=1
 
@@ -68,8 +64,7 @@ _NIXL_LIB="$_NIXL_LIBS_DIR"
 _NIXL_PLUGIN_DIR="$_NIXL_LIBS_DIR/plugins"
 
 # Requires --net=host (docker) / hostNetwork: true (k8s) to see the real
-# host RoCE interface — same requirement launch/rdu_decode.sh already has
-# on bare metal.
+# host RoCE interface.
 RDU_ROCE_IP_LOCAL=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep '^10\.17\.' | head -1 || true)
 RDU_ROCE_IP_LOCAL=${RDU_ROCE_IP_LOCAL:-$(hostname -I 2>/dev/null | awk '{print $1}')}
 

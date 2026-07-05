@@ -725,8 +725,8 @@ build_venv() {
     fi
 
     # NOTE: no REGISTER_CONSUMER_MSG patch for chunk-overlap KV transfer
-    # (VLLM_PD_CHUNK_OVERLAP=1) is applied here — launch/rdu_decode.sh and
-    # launch/gpu_prefill.sh both hardcode VLLM_PD_CHUNK_OVERLAP=0, so the
+    # (VLLM_PD_CHUNK_OVERLAP=1) is applied here — docker/rdu-decode-entrypoint.sh
+    # and launch/gpu_prefill.sh both hardcode VLLM_PD_CHUNK_OVERLAP=0, so the
     # feature isn't used.
 
     # nixl_connector.py (stock vLLM, not vllm-rdu): _pop_done_transfers treats a
@@ -954,9 +954,9 @@ PYEOF
 
     # `import vllm`/`import dynamo.vllm` alone do NOT exercise the full entrypoint
     # import graph (async engine, FastAPI, multimodal_utils) that `python -m
-    # dynamo.vllm` (what launch/rdu_decode.sh actually runs) does — a missing
-    # transitive dep here crashes the real launch ~12 minutes into BAR2 init,
-    # not at build time, unless checked explicitly like this.
+    # dynamo.vllm` (what docker/rdu-decode-entrypoint.sh actually runs) does —
+    # a missing transitive dep here crashes the real launch ~12 minutes into
+    # BAR2 init, not at build time, unless checked explicitly like this.
     python -c "from dynamo.vllm.main import main; print('dynamo.vllm.main: OK')"
 
     # Same idea for fast-coe's real RDU worker module chain (rdu_hardware.worker
