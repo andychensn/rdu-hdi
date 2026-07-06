@@ -1,11 +1,13 @@
 # Performance
 
-Latest full benchmark sweep, measured 2026-07-05 against commit `72dfcc71` (Part A repo
-restructure) — reflects the current repo layout (`build/`, `docker/{gpu,rdu,control-plane}/`,
-`launch/`, `bench/`, `test/`) and the `sambanova-deps-brcm-roce-userland` RPM-based bnxt_re fix
-from `cc050eec`. `launch/rdu_decode.sh`'s self-dispatch alignment (`dbe3fdf6`) landed after this
-sweep but changes only job submission/orchestration, not the served container's runtime behavior,
-so these numbers still reflect current `main`.
+Latest full benchmark sweep, measured 2026-07-06 after a complete wipe-and-rebuild reproducibility
+test: every local build artifact and locally-cached Docker image tag was deleted, then the entire
+stack was rebuilt from nothing but `README.md` + this repo's own scripts (fresh UCX/NIXL/vllm+cpu
+build, fresh `coe_api`/BAR2 self-build, three `--no-cache` Docker builds). Confirms current `main`
+is genuinely reproducible from a clean state, not just functionally correct — see
+`benchmark_results/repro_test_20260706/RESULTS.md` and
+`benchmark_results/REPRO_TEST_20260706_VS_HDI.md` (gitignored, local only) for the full
+reproducibility narrative and cross-codebase comparison.
 
 ## Setup
 
@@ -21,15 +23,15 @@ so these numbers still reflect current `main`.
 
 | ISL | OSL | Conc | Prompts | Succeeded | TTFT mean | TTFT p90 | TTFT p99 | TPOT mean | E2EL mean | req/s | out tok/s |
 |-----|-----|------|---------|-----------|-----------|----------|----------|-----------|-----------|-------|-----------|
-| 1000 | 1000 | 1 | 10 | 10 | 254 ms | 301 ms | 351 ms | 2.23 ms | 2484 ms | 0.402 | 402.4 |
-| 1000 | 1000 | 2 | 20 | 20 | 331 ms | 364 ms | 420 ms | 2.24 ms | 2566 ms | 0.779 | 778.7 |
-| 1000 | 1000 | 4 | 40 | 40 | 2655 ms | 2860 ms | 3091 ms | 2.28 ms | 4935 ms | 0.791 | 790.7 |
-| 10000 | 1000 | 1 | 10 | 10 | 894 ms | 973 ms | 1035 ms | 2.38 ms | 3274 ms | 0.305 | 305.3 |
-| 10000 | 1000 | 2 | 20 | 20 | 977 ms | 1123 ms | 1223 ms | 2.48 ms | 3458 ms | 0.576 | 575.8 |
-| 10000 | 1000 | 4 | 40 | 40 | 3325 ms | 3515 ms | 4375 ms | 2.45 ms | 5777 ms | 0.675 | 675.1 |
-| 100000 | 1000 | 1 | 10 | 10 | 22308 ms | 23025 ms | 23244 ms | 4.31 ms | 26618 ms | 0.038 | 37.6 |
-| 100000 | 1000 | 2 | 10 | 10 | 39120 ms | 41905 ms | 42017 ms | 4.31 ms | 43429 ms | 0.044 | 43.7 |
-| 100000 | 1000 | 4 | 10 | 10 | 73152 ms | 87103 ms | 88320 ms | 4.31 ms | 77460 ms | 0.044 | 43.9 |
+| 1000 | 1000 | 1 | 10 | 10 | 233 ms | 265 ms | 306 ms | 2.22 ms | 2454 ms | 0.407 | 407.3 |
+| 1000 | 1000 | 2 | 20 | 20 | 309 ms | 326 ms | 344 ms | 2.23 ms | 2540 ms | 0.786 | 786.4 |
+| 1000 | 1000 | 4 | 40 | 40 | 2598 ms | 2744 ms | 2916 ms | 2.32 ms | 4921 ms | 0.792 | 792.3 |
+| 10000 | 1000 | 1 | 10 | 10 | 909 ms | 1057 ms | 1127 ms | 2.38 ms | 3283 ms | 0.305 | 304.5 |
+| 10000 | 1000 | 2 | 20 | 20 | 971 ms | 1140 ms | 1257 ms | 2.47 ms | 3442 ms | 0.578 | 578.5 |
+| 10000 | 1000 | 4 | 40 | 40 | 3303 ms | 3532 ms | 4081 ms | 2.49 ms | 5794 ms | 0.674 | 673.5 |
+| 100000 | 1000 | 1 | 10 | 10 | 22133 ms | 22706 ms | 23007 ms | 4.32 ms | 26446 ms | 0.038 | 37.8 |
+| 100000 | 1000 | 2 | 10 | 10 | 38702 ms | 41709 ms | 41742 ms | 4.32 ms | 43014 ms | 0.044 | 44.2 |
+| 100000 | 1000 | 4 | 10 | 10 | 73244 ms | 86955 ms | 87348 ms | 4.32 ms | 77557 ms | 0.044 | 43.9 |
 
 **Zero failed requests** across all 9 configs.
 
@@ -40,4 +42,4 @@ bash bench/sweep.sh --label my_run
 ```
 
 Full raw result JSONs and the underlying `RESULTS.md` for this sweep are in
-`benchmark_results/part_a_verify/` (gitignored, local only).
+`benchmark_results/repro_test_20260706/` (gitignored, local only).
