@@ -264,13 +264,14 @@ Key non-obvious fixes baked into the image:
 Key non-obvious fixes baked into the image (`Dockerfile.rdu`, `docker/rdu-decode-entrypoint.sh`):
 
 1. **SambaNova's `bnxt_re` RDMA provider replacement**: RDU nodes deliberately disable the stock
-   rdma-core `bnxt_re` userspace provider (renamed `.orig`) in favor of a SambaNova-supplied one at
-   `/opt/sambanova/lib/libbnxt_re-rdmav34.so` — a different bug than the GPU side's Broadcom OOT
-   issue above, but the same symptom class (`UCX ERROR no usable transports/devices`). `rhel810-dev`
-   (this image's base) doesn't ship the replacement, so it's vendored directly into the repo
-   (`vendor/bnxt_re/`) and swapped in during the Dockerfile build. Package-version matching alone
-   (`rdma-core-48.0` present in both) does not catch this; it's a file-level swap, not a
-   package-level one.
+   rdma-core `bnxt_re` userspace provider in favor of a SambaNova-supplied one — a different bug
+   than the GPU side's Broadcom OOT issue above, but the same symptom class (`UCX ERROR no usable
+   transports/devices`). `rhel810-dev` (this image's base) doesn't have it installed, but does have
+   the repo config to `dnf install sambanova-deps-brcm-roce-userland` directly (pinned in
+   `config/versions.env`'s `BRCM_ROCE_USERLAND_VERSION`) — the same RPM that provisions real
+   bare-metal RDU nodes. That package's own postinstall script has a real gap (it swaps the driver
+   registration file back into place but not the `.so` itself), so `Dockerfile.rdu` finishes the
+   swap with one explicit `cp` after the `dnf install`.
 2. **`coe_api`/BAR2 runtime connector libs are baked in** (self-built, see `scripts/build_bar2.sh`
    and the architecture note above). `rdu_engine`'s compiled extension also transitively needs
    `libmpi.so.12` and a few abseil/circllhist libs — these ship inside `rhel810-dev` under

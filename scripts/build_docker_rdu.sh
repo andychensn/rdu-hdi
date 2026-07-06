@@ -68,6 +68,7 @@ sudo -g docker /usr/bin/docker-wrapper build \
     --build-arg RHEL810_DEV_IMAGE="$RHEL810_DEV_IMAGE" \
     --build-arg FAST_COE_COMMIT="$FAST_COE_COMMIT" \
     --build-arg RDU_TRANSFORMERS_VERSION="$RDU_TRANSFORMERS_VERSION" \
+    --build-arg BRCM_ROCE_USERLAND_VERSION="$BRCM_ROCE_USERLAND_VERSION" \
     -t "$FULL_IMAGE" \
     -f "$REPO_ROOT/Dockerfile.rdu" \
     "$REPO_ROOT"

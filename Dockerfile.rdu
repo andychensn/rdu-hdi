@@ -30,27 +30,30 @@ ARG RHEL810_DEV_IMAGE
 
 FROM ${RHEL810_DEV_IMAGE} AS final
 
+ARG BRCM_ROCE_USERLAND_VERSION
+
 RUN dnf install -y git patch rdma-core libibverbs libibverbs-utils && dnf clean all
 
 # SambaNova's RDMA userland replaces the stock rdma-core bnxt_re provider,
-# which on this cluster's hardware sends usable-transport-breaking ioctls
-# (confirmed by direct bare-metal comparison on sc3-s339: the stock
-# libbnxt_re-rdmav34.so there is deliberately disabled -- renamed .orig --
-# in favor of SambaNova's own copy at /opt/sambanova/lib/libbnxt_re-rdmav34.so,
-# installed via /opt/sambanova/share/sambanova-deps-brcm-roce-userland/libbnxt_re.sh).
+# which on this cluster's hardware sends usable-transport-breaking ioctls.
 # Without it, UCX reports "no usable transports/devices" for bnxt_re0/2/4/6.
-# rhel810-dev's base /opt/sambanova does not ship this package, so the
-# library itself (not the install script) is vendored directly below
-# (vendor/bnxt_re/, pulled from bare metal's /opt/sambanova/lib/).
-COPY vendor/bnxt_re/libbnxt_re-rdmav34.so /tmp/libbnxt_re-rdmav34.so
-COPY vendor/bnxt_re/bnxt_re.driver /tmp/bnxt_re.driver
-RUN bash -c ' \
-    [ -f /usr/lib64/libibverbs/libbnxt_re-rdmav34.so ] && mv /usr/lib64/libibverbs/libbnxt_re-rdmav34.so /usr/lib64/libibverbs/libbnxt_re-rdmav34.so.orig; \
-    [ -f /etc/libibverbs.d/bnxt_re.driver ] && mv /etc/libibverbs.d/bnxt_re.driver /etc/libibverbs.d/bnxt_re.driver.orig; \
-    cp /tmp/libbnxt_re-rdmav34.so /usr/lib64/libibverbs/libbnxt_re-rdmav34.so && \
-    cp /tmp/bnxt_re.driver /etc/libibverbs.d/bnxt_re.driver && \
-    rm -f /tmp/libbnxt_re-rdmav34.so /tmp/bnxt_re.driver && \
-    ldconfig'
+# sambanova-deps-brcm-roce-userland is the real, versioned RPM that
+# provisions this on bare metal too (config/versions.env's
+# BRCM_ROCE_USERLAND_VERSION), from SambaNova's internal Artifactory --
+# rhel810-dev's base doesn't have it installed, but does have the repo
+# config to install it directly.
+#
+# NOTE: the RPM's own postinstall script
+# (/opt/sambanova/share/sambanova-deps-brcm-roce-userland/libbnxt_re.sh)
+# has a real gap -- it renames the stock driver file AND the stock .so to
+# .orig, but only copies the new *driver* file back into place, never the
+# .so (verified directly: after a plain `dnf install`,
+# /usr/lib64/libibverbs/libbnxt_re-rdmav34.so doesn't exist at all). The
+# explicit `cp` below finishes what that script leaves incomplete.
+RUN dnf install -y sambanova-deps-brcm-roce-userland-${BRCM_ROCE_USERLAND_VERSION} && \
+    cp /opt/sambanova/lib/libbnxt_re-rdmav34.so /usr/lib64/libibverbs/libbnxt_re-rdmav34.so && \
+    ldconfig && \
+    dnf clean all
 
 ENV PATH=/opt/sambanova/bin:$PATH
 ENV PYTHONNOUSERSITE=1
