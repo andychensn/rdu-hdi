@@ -237,12 +237,51 @@ RDU side (`build/rdu_env.sh`, `patches/rdu/`):
 
 ## Component repos
 
-| Repo | Purpose |
-|------|---------|
-| [`andychensn/ucx`](https://github.com/andychensn/ucx) | UCX 1.22 + SN RDMA patches (used by both GPU and RDU sides) |
-| [`andychensn/nixl`](https://github.com/andychensn/nixl) | NIXL + SN UCX integration |
-| `sambanova/fast-coe` | vllm-rdu connector/engine (`server/vllm-rdu`), pinned by commit in `config/versions.env` |
-| [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | Source of the GPU-side `REGISTER_CONSUMER_MSG` producer file |
+| Repo | Access | Purpose |
+|------|--------|---------|
+| [`andychensn/ucx`](https://github.com/andychensn/ucx) | public | UCX 1.22 + SN RDMA patches (used by both GPU and RDU sides) |
+| [`andychensn/nixl`](https://github.com/andychensn/nixl) | public | NIXL + SN UCX integration |
+| `sambanova/fast-coe` | private, SSH key required | vllm-rdu connector/engine (`server/vllm-rdu`), pinned by commit in `config/versions.env` |
+| [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | private | Source of the GPU-side `REGISTER_CONSUMER_MSG` producer file |
+| `SambaNova/software` | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | `coe_api`/`rdu_engine` + BAR2 runtime connector libs, self-built by `build/bar2.sh` from `SOFTWARE_REPO_COMMIT` (`config/versions.env`) |
+| [`SemiAnalysisAI/InferenceX`](https://github.com/SemiAnalysisAI/InferenceX) | public | Benchmark tool (`benchmark_serving.py`), pinned via `INFERENCEX_COMMIT` |
+
+**Non-git external dependencies**, also pinned in `config/versions.env`:
+
+| Dependency | Source | Purpose |
+|---|---|---|
+| `rhel810-dev:latest` | `artifacts.sambanovasystems.com/sw-docker/` (internal Artifactory) | RDU decode's base image — brings `/opt/sambanova`'s `torch==2.2.0+sn` along |
+| `vllm/vllm-openai:0.16.0` | Docker Hub (public) | GPU prefill's base image |
+| `sambanova-deps-brcm-roce-userland-233.0.152.2-1.el8` | internal Artifactory `[tools]` repo (unauthenticated, via `rhel810-dev`'s own repo config) | the bnxt_re RDMA userland fix (see "RDU decode — notes" below) |
+| etcd 3.5.15, NATS 2.14.3 | GitHub Releases (public), SHA256-verified | control plane binaries |
+
+## What can't be reproduced from this repo alone
+
+Everything listed above is pinned and self-contained — but a few things this stack depends on live
+entirely outside this repo's control, with no version pin or drift detection possible:
+
+- **The PEF** (`PEF` in `config/model.env`) — a compiled SambaNova execution graph for one specific
+  model topology (MiniMax-M2.7, TP16, specific dynamic-dims ranges). Produced by a separate PEF
+  compilation pipeline this repo has no part of; swapping models requires someone to already have a
+  working PEF for it.
+- **The FP8 checkpoint** (`MINI_CKPT_FP8` in `config/minimax_m2.yaml`) — SambaNova's packed/quantized
+  weight format, produced by a separate conversion pipeline, not built or versioned here.
+- **The PEF and checkpoint paths are personal scratch space**, not a shared or versioned location
+  (`PEF` sits under `/import/ml-sc-scratch4/jayr/...`). If that engineer's scratch space is ever
+  cleaned up, the path breaks with no warning and no repo-level way to detect it in advance.
+- **The RDU kernel driver and `/dev/rdu*` device nodes** — bare-metal-only by nature (`rdu_driver.ko`
+  plus the `snd.service` device-management daemon must already be running on any node this deploys
+  to). No container can bring this along; it's a one-time per-physical-host provisioning concern,
+  like a GPU driver.
+- **`BRCM_ROCELIB`'s tarball** (Broadcom's OOT `libbnxt_re` source, GPU side) — IT-distributed, not
+  pinned to a git commit or package registry. If the file at `/import/it-tools/idc/fw/brcm/...` ever
+  changes or moves, there's no automated way to detect it; the fallback is "contact IT."
+- **Access gates with no public fallback**: SSH key access to `github.com` (private `fast-coe`) and
+  `github.sambanovasystems.com` (private `software` repo) are both hard requirements — anyone without
+  both cannot reproduce the RDU-side build at all, only read this repo's own code.
+- **Cluster-specific topology** (`config/cluster.env`) — node names, RoCE IPs, and SLURM
+  partition/QOS/reservation names are specific to this cluster's current allocation and need
+  hand-editing on any other cluster (see "Configuration" above).
 
 ## GPU prefill — notes
 
