@@ -41,7 +41,7 @@ All external dependencies are pinned to exact commit SHAs in `config/versions.en
 | `docker/rdu/build.sh` | Build + push the RDU decode Docker image |
 | `launch/control_plane.sh` | Launch (or `--stop`) the control-plane container |
 | `launch/gpu_prefill.sh` | Launch the GPU prefill worker |
-| `launch/rdu_decode.sh` | Launch the RDU decode worker (invoked via `snrdu`) |
+| `launch/rdu_decode.sh` | Launch the RDU decode worker (submits its own `snrdu` job) |
 | `bench/run.sh` | Run one benchmark config |
 | `bench/sweep.sh` | Run the standard 9-config benchmark sweep |
 | `test/e2e_rdu_decode.sh` | End-to-end smoke test of the RDU decode image |
@@ -143,15 +143,15 @@ bash launch/control_plane.sh &   # persistent; backgrounded
 # 2. GPU prefill (~10 min: model load + warmup)
 bash launch/gpu_prefill.sh
 
-# 3. RDU decode — waits for GPU registration, then ~12-14 min BAR2/PEF init
-#    via snrdu on the RDU node, see launch/rdu_decode.sh for the
-#    full docker-run-wrapper invocation (--net=host, --device /dev/rdu
-#    --device /dev/rdu_mem_map --device /dev/infiniband, --ulimit memlock=-1,
-#    --cap-add IPC_LOCK, and MODEL/SERVED_MODEL_NAME/MAX_MODEL_LEN/PEF/
-#    MODEL_CONFIG/CONTROL_PLANE_IP/... env vars)
+# 3. RDU decode — submits its own snrdu job (same self-dispatching shape as
+#    launch/gpu_prefill.sh) and waits for it to register. Run this only
+#    after step 2 has already registered (see warning below) — this script
+#    does not check GPU status itself, it just launches and waits on its
+#    own ~12-14 min BAR2/PEF init.
+source config/model.env
+bash launch/rdu_decode.sh
 
 # 4. Warmup (first request ~47s, cold NIXL init)
-source config/model.env
 curl -s http://localhost:18000/v1/completions \
     -H "Content-Type: application/json" \
     -d "{\"model\":\"$SERVED_MODEL_NAME\",\"prompt\":\"hello\",\"max_tokens\":1}"
