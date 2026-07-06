@@ -241,9 +241,9 @@ RDU side (`build/rdu_env.sh`, `patches/rdu/`):
 |------|--------|---------|
 | [`andychensn/ucx`](https://github.com/andychensn/ucx) | public | UCX 1.22 + SN RDMA patches (used by both GPU and RDU sides) |
 | [`andychensn/nixl`](https://github.com/andychensn/nixl) | public | NIXL + SN UCX integration |
-| `sambanova/fast-coe` | private, SSH key required | vllm-rdu connector/engine (`server/vllm-rdu`), pinned by commit in `config/versions.env` |
+| [`sambanova/fast-coe`](https://github.com/sambanova/fast-coe) | private, SSH key required | vllm-rdu connector/engine (`server/vllm-rdu`), pinned by commit in `config/versions.env` |
 | [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | private | Source of the GPU-side `REGISTER_CONSUMER_MSG` producer file |
-| `SambaNova/software` | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | `coe_api`/`rdu_engine` + BAR2 runtime connector libs, self-built by `build/bar2.sh` from `SOFTWARE_REPO_COMMIT` (`config/versions.env`) |
+| [`SambaNova/software`](https://github.sambanovasystems.com/SambaNova/software) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | `coe_api`/`rdu_engine` + BAR2 runtime connector libs, self-built by `build/bar2.sh` from `SOFTWARE_REPO_COMMIT` (`config/versions.env`) |
 | [`SemiAnalysisAI/InferenceX`](https://github.com/SemiAnalysisAI/InferenceX) | public | Benchmark tool (`benchmark_serving.py`), pinned via `INFERENCEX_COMMIT` |
 
 **Non-git external dependencies**, also pinned in `config/versions.env`:
