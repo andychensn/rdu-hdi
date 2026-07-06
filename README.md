@@ -172,6 +172,8 @@ Results saved to `benchmark_results/` (gitignored). To run the standard 9-config
 bash bench/sweep.sh --label my_run [--endpoint http://HOST:PORT] [--model NAME]
 ```
 
+See `docs/PERFORMANCE.md` for the latest full sweep results and which commit they were measured against.
+
 ## Teardown
 
 ```bash
