@@ -2,13 +2,13 @@
 # RDU decode container entrypoint -- runs `python -m dynamo.vllm` in
 # disaggregated decode mode.
 #   - /opt/sambanova/bin/python3.11 is used directly; everything
-#     scripts/build_rdu_env.sh / docker/rdu-decode-install-deps.sh installs
+#     build/rdu_env.sh / docker/rdu/install-deps.sh installs
 #     lives in its site-packages (no venv).
 #   - UCX is at a fixed path baked into the image (/opt/rdu-ucx).
 #   - fast-coe is at a fixed path baked into the image (/build/fast-coe).
 #   - coe_api/rdu_engine (pip-installed) and the BAR2 runtime connector libs
 #     (/opt/bar2-runtime/{lib,preload}) are baked into the image at build
-#     time (self-built, see scripts/build_bar2.sh). Cluster topology
+#     time (self-built, see build/bar2.sh). Cluster topology
 #     (CONTROL_PLANE_IP, GPU_ROCE_IP, ...) and model config (MODEL, PEF, ...)
 #     are passed in as env vars instead, since both vary independently of
 #     the image build -- MODEL/PEF point at NFS paths for the
@@ -36,7 +36,7 @@ _BAR2_PRELOAD=/opt/bar2-runtime/preload
 mkdir -p "$RDU_CACHE"
 
 for p in "$_BAR2_LIB" "$_BAR2_PRELOAD/libc_samba_runtime.so"; do
-    [ -e "$p" ] || { echo "ERROR: $p not found — image build is incomplete (expected to be baked in, see Dockerfile.rdu)"; exit 1; }
+    [ -e "$p" ] || { echo "ERROR: $p not found — image build is incomplete (expected to be baked in, see docker/rdu/Dockerfile)"; exit 1; }
 done
 
 # /dev/rdu and /dev/rdu_mem_map are NOT provided by docker-run-wrapper's

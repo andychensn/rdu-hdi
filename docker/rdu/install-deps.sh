@@ -6,13 +6,13 @@
 #   - UCX/NIXL/vllm+cpu are not built here — this Dockerfile COPYs the
 #     already-built artifacts (rdu-ucx-install/, wheelhouse/*.whl) instead,
 #     since they're pure binary artifacts already validated on this node
-#     family (see scripts/build_rdu_env.sh).
+#     family (see build/rdu_env.sh).
 #   - coe_api/rdu_engine are self-built and installed as wheels directly
-#     (see the "coe_api/rdu_engine" section below and scripts/build_bar2.sh);
+#     (see the "coe_api/rdu_engine" section below and build/bar2.sh);
 #     the BAR2 runtime connector libs are COPYed into the image separately
-#     by Dockerfile.rdu (rdu-runtime-install/{lib,preload}).
+#     by docker/rdu/Dockerfile (rdu-runtime-install/{lib,preload}).
 #
-# Run inside the Dockerfile.rdu build (working dir: repo root, with
+# Run inside the docker/rdu/Dockerfile build (working dir: repo root, with
 # wheelhouse/, rdu-ucx-install/, patches/rdu/, fast-coe/ all present).
 set -euo pipefail
 
@@ -169,8 +169,8 @@ install_whl "av-*.whl"
 echo "=== coe_api/rdu_engine (self-built, from wheelhouse/) ==="
 RDU_ENGINE_WHL=$(find "$WHEELHOUSE" -name "sambanova_rdu_engine_api-*.whl" 2>/dev/null | head -1)
 COE_API_WHL=$(find "$WHEELHOUSE" -name "sambanova_coe_api-*.whl" 2>/dev/null | head -1)
-[ -n "$RDU_ENGINE_WHL" ] || { echo "ERROR: no sambanova_rdu_engine_api wheel in wheelhouse (run scripts/build_bar2.sh first)"; exit 1; }
-[ -n "$COE_API_WHL" ] || { echo "ERROR: no sambanova_coe_api wheel in wheelhouse (run scripts/build_bar2.sh first)"; exit 1; }
+[ -n "$RDU_ENGINE_WHL" ] || { echo "ERROR: no sambanova_rdu_engine_api wheel in wheelhouse (run build/bar2.sh first)"; exit 1; }
+[ -n "$COE_API_WHL" ] || { echo "ERROR: no sambanova_coe_api wheel in wheelhouse (run build/bar2.sh first)"; exit 1; }
 $PIP install -q --no-deps --force-reinstall --no-cache-dir "$RDU_ENGINE_WHL"
 $PIP install -q --no-deps --force-reinstall --no-cache-dir "$COE_API_WHL"
 echo "  installed: $(basename "$RDU_ENGINE_WHL"), $(basename "$COE_API_WHL")"

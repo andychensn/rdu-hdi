@@ -4,7 +4,6 @@ rdu-ucx-install/
 .venv_bench/
 .venv_rdu/
 .gpu_cache/
-build/
 *.log
 # snrdu auto-generated batch-script artifacts (job-name-based, no fixed prefix)
 bash_[0-9]*
@@ -15,7 +14,7 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Wheels (fetch/build via scripts/)
+# Wheels (fetch/build via build/)
 wheelhouse/
 
 # Results

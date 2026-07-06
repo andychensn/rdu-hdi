@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Produces the wheels under wheelhouse/ and the libs under
-# rdu-runtime-install/ that docker/rdu-decode-install-deps.sh and
-# Dockerfile.rdu bake into the RDU decode image.
+# rdu-runtime-install/ that docker/rdu/install-deps.sh and
+# docker/rdu/Dockerfile bake into the RDU decode image.
 #
 # Build coe_api/rdu_engine (Python wheel) and the runtime connector libs
 # (libc_samba_runtime.so/libcpp_samba_runtime.so) from a pinned commit of
@@ -12,7 +12,7 @@
 # Two phases, matching every other RDU build script in this repo:
 #
 # Phase 1 (login node — needs internet):
-#   bash scripts/build_bar2.sh --fetch-only
+#   bash build/bar2.sh --fetch-only
 #
 # Phase 2 (RDU node via snrdu, INSIDE the rhel810-dev container — see below
 # for why bare metal doesn't work):
@@ -21,7 +21,7 @@
 #       --allow-local-lib-python --reservation "$RDU_RESERVATION" \
 #       --pef "$PEF" --timeout "$RDU_TIMEOUT" \
 #       -o logs/build_bar2.log \
-#       -- bash scripts/build_bar2.sh --build-only
+#       -- bash build/bar2.sh --build-only
 #
 # NOTE: `source a.env b.env` only sources a.env — bash's `source` treats
 # extra args as $1.. for the sourced script, not additional files. Always
@@ -288,7 +288,7 @@ build_on_rdu_node() {
             -e "BAR2_IN_CONTAINER=1" \
             -e "HOME=/tmp" \
             "$RHEL810_DEV_IMAGE" \
-            -c "cd '$REPO_ROOT' && bash scripts/build_bar2.sh --build-only"
+            -c "cd '$REPO_ROOT' && bash build/bar2.sh --build-only"
     fi
 
     build_coe_api_wheel
@@ -318,7 +318,7 @@ case "$MODE" in
         echo "      --allow-local-lib-python --reservation \"\$RDU_RESERVATION\" \\"
         echo "      --pef \"\$PEF\" --timeout \"\$RDU_TIMEOUT\" \\"
         echo "      -o logs/build_bar2.log \\"
-        echo "      -- bash scripts/build_bar2.sh --build-only"
+        echo "      -- bash build/bar2.sh --build-only"
         ;;
     *)
         echo "Usage: $0 [--fetch-only|--build-only]"; exit 1 ;;

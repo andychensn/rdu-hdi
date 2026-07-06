@@ -1,18 +1,18 @@
 # Control-plane image for rdu-hdi disaggregated inference: etcd + NATS +
 # Dynamo HTTP frontend, all three bundled into one lightweight image with no
-# RDU/GPU/NFS dependency (see docker/control-plane-entrypoint.sh for the
+# RDU/GPU/NFS dependency (see docker/control-plane/entrypoint.sh for the
 # process set).
 #
 # Build (from login node):
-#   bash scripts/build_docker_control_plane.sh
+#   bash docker/control-plane/build.sh
 #
 # Run standalone (for local testing outside k8s):
 #   docker run --rm -p 12379:12379 -p 14222:14222 -p 18000:18000 \
 #       -e CONTROL_PLANE_IP=0.0.0.0 IMAGE
 #
 # All ARGs below are intentionally declared with NO default value — see
-# Dockerfile.gpu's comment for why: config/versions.env is the single
-# source of truth, scripts/build_docker_control_plane.sh passes every
+# docker/gpu/Dockerfile's comment for why: config/versions.env is the single
+# source of truth, docker/control-plane/build.sh passes every
 # value via --build-arg, and a default here would silently drift.
 ARG ETCD_VERSION
 ARG NATS_VERSION
@@ -48,7 +48,7 @@ RUN mkdir -p /opt/vendor/bin /tmp/vendor-fetch && cd /tmp/vendor-fetch && \
     cd / && rm -rf /tmp/vendor-fetch
 
 # ── ai-dynamo (dynamo.frontend) + runtime deps ────────────────────────────────
-# No [vllm] extra, same reasoning as Dockerfile.gpu: the frontend only needs
+# No [vllm] extra, same reasoning as docker/gpu/Dockerfile: the frontend only needs
 # dynamo.frontend, not the vllm-coupled extras.
 ARG DYNAMO_VERSION
 RUN pip install --no-cache-dir \
@@ -56,7 +56,7 @@ RUN pip install --no-cache-dir \
         pydantic fastapi uvicorn aiohttp msgpack pyzmq uvloop sortedcontainers \
         cbor2 diskcache
 
-COPY docker/control-plane-entrypoint.sh /opt/control-plane-entrypoint.sh
+COPY docker/control-plane/entrypoint.sh /opt/control-plane-entrypoint.sh
 RUN chmod +x /opt/control-plane-entrypoint.sh
 
 # Validate the image at build time.

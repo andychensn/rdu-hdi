@@ -4,7 +4,7 @@
 # image), vllm+cpu + ai-dynamo + fast-coe's vllm-rdu + UCX/NIXL (COPIED as
 # pre-built binary artifacts from wheelhouse/ and rdu-ucx-install/), AND
 # coe_api/rdu_engine + the BAR2 runtime connector libs (self-built, see
-# scripts/build_bar2.sh) from wheelhouse/ and rdu-runtime-install/{lib,preload}.
+# build/bar2.sh) from wheelhouse/ and rdu-runtime-install/{lib,preload}.
 # The model checkpoint and PEF are read from NFS at container runtime
 # (large data files this image doesn't embed) — everything else is
 # self-contained.
@@ -22,10 +22,10 @@
 # device plugin for /dev/rdu*, plus a hostPath volume for /dev/infiniband.
 #
 # Build (from the login node — the FROM base image brings /opt/sambanova
-# along, same principle as Dockerfile.gpu bringing CUDA along via FROM
+# along, same principle as docker/gpu/Dockerfile bringing CUDA along via FROM
 # vllm/vllm-openai; no snrdu/RDU node needed to BUILD this image, only to
 # RUN it):
-#   bash scripts/build_docker_rdu.sh
+#   bash docker/rdu/build.sh
 ARG RHEL810_DEV_IMAGE
 
 FROM ${RHEL810_DEV_IMAGE} AS final
@@ -63,11 +63,11 @@ COPY rdu-ucx-install/ /opt/rdu-ucx/
 ENV LD_LIBRARY_PATH=/opt/rdu-ucx/lib:${LD_LIBRARY_PATH:-}
 ENV UCX_MODULE_DIR=/opt/rdu-ucx/lib/ucx
 
-# ── BAR2 runtime connector libs (self-built, see scripts/build_bar2.sh) ────
+# ── BAR2 runtime connector libs (self-built, see build/bar2.sh) ────
 # coe_api/rdu_engine's compiled extension dynamically links against
 # libc_samba_runtime.so/libcpp_samba_runtime.so at IMPORT time — not just at
 # actual RDU session creation — so these must be on LD_LIBRARY_PATH before
-# rdu-decode-install-deps.sh's own import validation below runs. Baked in
+# install-deps.sh's own import validation below runs. Baked in
 # directly (27 .so files from the runtime 'graph' CMake target group).
 COPY rdu-runtime-install/lib/ /opt/bar2-runtime/lib/
 COPY rdu-runtime-install/preload/ /opt/bar2-runtime/preload/
@@ -84,17 +84,17 @@ ENV LD_LIBRARY_PATH=/opt/bar2-runtime/lib:/opt/sambanova/lib:${LD_LIBRARY_PATH:-
 COPY wheelhouse/ /build/wheelhouse/
 COPY patches/rdu/ /build/patches/rdu/
 # .dockerignore excludes fast-coe/.git/ from the build context entirely
-# (keeps the context small) — scripts/build_docker_rdu.sh verifies the
+# (keeps the context small) — docker/rdu/build.sh verifies the
 # checkout is at the pinned FAST_COE_COMMIT on the login node, before this
 # COPY, since the commit can't be checked here without the .git directory.
 COPY fast-coe/ /build/fast-coe/
 
 ARG RDU_TRANSFORMERS_VERSION
-COPY docker/rdu-decode-install-deps.sh /build/rdu-decode-install-deps.sh
-RUN chmod +x /build/rdu-decode-install-deps.sh && \
-    RDU_TRANSFORMERS_VERSION="${RDU_TRANSFORMERS_VERSION}" /build/rdu-decode-install-deps.sh
+COPY docker/rdu/install-deps.sh /build/install-deps.sh
+RUN chmod +x /build/install-deps.sh && \
+    RDU_TRANSFORMERS_VERSION="${RDU_TRANSFORMERS_VERSION}" /build/install-deps.sh
 
-COPY docker/rdu-decode-entrypoint.sh /opt/rdu-decode-entrypoint.sh
+COPY docker/rdu/entrypoint.sh /opt/rdu-decode-entrypoint.sh
 RUN chmod +x /opt/rdu-decode-entrypoint.sh
 
 RUN rm -rf /build/wheelhouse /build/patches

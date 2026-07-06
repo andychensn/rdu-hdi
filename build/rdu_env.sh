@@ -10,7 +10,7 @@
 # Two phases, matching every other RDU build script in this repo:
 #
 # Phase 1 (login node — needs internet):
-#   bash scripts/build_rdu_env.sh --fetch-only
+#   bash build/rdu_env.sh --fetch-only
 #
 # Phase 2 (RDU node via snrdu — no internet needed once fetched):
 #   source config/cluster.env config/model.env
@@ -18,15 +18,15 @@
 #       --allow-local-lib-python --reservation "$RDU_RESERVATION" \
 #       --pef "$PEF" --timeout "$RDU_TIMEOUT" \
 #       -o logs/build_rdu_env.log \
-#       -- bash scripts/build_rdu_env.sh --build-only
+#       -- bash build/rdu_env.sh --build-only
 #
 # Outputs:
 #   $REPO_ROOT/fast-coe/          — vllm-rdu source, pinned by commit
 #   $REPO_ROOT/rdu-ucx-install/   — UCX (CPU-only, bnxt_re verbs, no CUDA)
 #   $REPO_ROOT/wheelhouse/        — vllm+cpu, nixl, ai-dynamo(-runtime), and all
 #                                   transitive-dep wheels
-# All of the above get COPY'd into Dockerfile.rdu by
-# docker/rdu-decode-install-deps.sh, which does its own install + patch +
+# All of the above get COPY'd into docker/rdu/Dockerfile by
+# docker/rdu/install-deps.sh, which does its own install + patch +
 # validation pass directly into the image — this script doesn't build or
 # validate a venv itself.
 set -euo pipefail
@@ -313,7 +313,7 @@ PYEOF
         echo "  ai-dynamo wheel already present"
     fi
 
-    # Every other unpinned wheel that docker/rdu-decode-install-deps.sh's
+    # Every other unpinned wheel that docker/rdu/install-deps.sh's
     # install_whl calls expect to already be in wheelhouse/ — vllm's own
     # import-time deps plus the "extra transitive deps" discovered by
     # exercising the real entrypoint import chain (see that script for why
@@ -321,7 +321,7 @@ PYEOF
     # --only-binary=:all: keeps them prebuilt wheels rather than sdists
     # needing a compiler.
     #
-    # If you add a new install_whl(...) call to docker/rdu-decode-install-deps.sh,
+    # If you add a new install_whl(...) call to docker/rdu/install-deps.sh,
     # add the matching package name here too — otherwise it only "works" for
     # as long as your own wheelhouse/ happens to already have it cached, and
     # silently breaks on the next genuinely clean rebuild.
@@ -387,7 +387,7 @@ print(m.group(1) if m else '')
         fi
     fi
 
-    # jiter: needed cp311-specific (docker/rdu-decode-install-deps.sh
+    # jiter: needed cp311-specific (docker/rdu/install-deps.sh
     # explicitly avoids the cp312 variant pip would otherwise resolve to on
     # some platform args).
     if ! find "$WHEELHOUSE" -name "jiter-*cp311*.whl" 2>/dev/null | grep -q .; then
@@ -657,7 +657,7 @@ case "$MODE" in
         echo "      --allow-local-lib-python ${RDU_RESERVATION:+--reservation $RDU_RESERVATION} \\"
         echo "      --pef ${PEF:-<PEF>} --timeout ${RDU_TIMEOUT:-01:50:00} \\"
         echo "      -o logs/build_rdu_env.log \\"
-        echo "      -- bash $REPO_ROOT/scripts/build_rdu_env.sh --build-only"
+        echo "      -- bash $REPO_ROOT/build/rdu_env.sh --build-only"
         ;;
     *)
         echo "Usage: $0 [--fetch-only | --build-only | (no arg = fetch + print next-step instructions)]"

@@ -12,19 +12,19 @@
 #   - ai-dynamo — dynamo.vllm + dynamo.frontend Python modules (no [vllm] extra: that upgrades vllm to 0.20.x)
 #
 # Build (from login node sc-vnc9):
-#   bash scripts/build_docker_gpu.sh
+#   bash docker/gpu/build.sh
 #
 # Run (inside SLURM job on GPU node):
 #   sudo -g docker /usr/bin/cuda-docker-run-wrapper --net=host --rm IMAGE vllm serve ...
 #
 # All ARGs below are intentionally declared with NO default value.
 # config/versions.env is the single source of truth for every pin here;
-# scripts/build_docker_gpu.sh sources it and passes every value via
+# docker/gpu/build.sh sources it and passes every value via
 # --build-arg. A default here would silently drift from versions.env the
 # next time one of them changes and the other doesn't — better to fail
 # loudly (empty ref/tag) than build successfully against a stale pin.
-# Do not `docker build -f Dockerfile.gpu .` directly; always go through
-# scripts/build_docker_gpu.sh.
+# Do not `docker build -f docker/gpu/Dockerfile .` directly; always go through
+# docker/gpu/build.sh.
 ARG VLLM_VERSION
 
 # ── Stage 1: builder — compiles UCX and NIXL wheel ───────────────────────────

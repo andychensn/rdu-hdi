@@ -2,7 +2,7 @@
 # Run benchmark_serving.py from SemiAnalysisAI/InferenceX (pinned commit).
 #
 # Usage:
-#   bash scripts/benchmark.sh \
+#   bash bench/run.sh \
 #       --input-len 1000 --output-len 1000 \
 #       --concurrency 1 --num-prompts 10
 #

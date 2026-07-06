@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GPU prefill worker — submits SLURM job, waits for Dynamo registration.
 # Runs via Docker (vllm/vllm-openai base + UCX/NIXL/patch baked in).
-# Build the image first: bash scripts/build_docker_gpu.sh
+# Build the image first: bash docker/gpu/build.sh
 #
 # Usage: bash launch/gpu_prefill.sh
 set -euo pipefail

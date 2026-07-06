@@ -3,9 +3,9 @@
 # Run from login node (sc-vnc9) — no GPU required.
 #
 # Usage:
-#   bash scripts/build_docker_gpu.sh             # builds + pushes with default tag
-#   bash scripts/build_docker_gpu.sh --no-push   # build only, skip push
-#   bash scripts/build_docker_gpu.sh --no-cache  # force a cache-free rebuild
+#   bash docker/gpu/build.sh             # builds + pushes with default tag
+#   bash docker/gpu/build.sh --no-push   # build only, skip push
+#   bash docker/gpu/build.sh --no-cache  # force a cache-free rebuild
 #                                                 # (use for reproducibility testing —
 #                                                 # this daemon is shared with other
 #                                                 # users, so we can't just `docker
@@ -17,7 +17,7 @@
 # Update PATCH when UCX/NIXL commits or the vllm patch changes.
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)
 source "$REPO_ROOT/config/versions.env"
 source "$REPO_ROOT/config/cluster.env"
 
@@ -73,7 +73,7 @@ echo "    NIXL:        $NIXL_BRANCH @ $NIXL_COMMIT"
 echo "    Dynamo:      $DYNAMO_VERSION"
 echo ""
 
-# Dockerfile.gpu's ARGs have no defaults — every pin must come from here
+# docker/gpu/Dockerfile's ARGs have no defaults — every pin must come from here
 # (config/versions.env), or the build fails loudly instead of silently
 # using a stale value baked into the Dockerfile.
 BUILD_FLAGS=()
@@ -90,7 +90,7 @@ sudo -g docker /usr/bin/docker-wrapper build \
     --build-arg NIXL_BRANCH="$NIXL_BRANCH" \
     --build-arg DYNAMO_VERSION="$DYNAMO_VERSION" \
     -t "$FULL_IMAGE" \
-    -f "$REPO_ROOT/Dockerfile.gpu" \
+    -f "$REPO_ROOT/docker/gpu/Dockerfile" \
     "$REPO_ROOT"
 
 echo ""

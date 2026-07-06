@@ -3,15 +3,15 @@
 # Run from login node — no GPU/RDU required, zero NFS dependency.
 #
 # Usage:
-#   bash scripts/build_docker_control_plane.sh             # builds + pushes with default tag
-#   bash scripts/build_docker_control_plane.sh --no-push   # build only, skip push
-#   bash scripts/build_docker_control_plane.sh --no-cache  # force a cache-free rebuild
+#   bash docker/control-plane/build.sh             # builds + pushes with default tag
+#   bash docker/control-plane/build.sh --no-push   # build only, skip push
+#   bash docker/control-plane/build.sh --no-cache  # force a cache-free rebuild
 #
 # Image is tagged: $REGISTRY/$IMAGE_NAME:v${DYNAMO_VERSION}-rdu-hdi.${PATCH}
 # where PATCH is an incrementing integer per rdu-hdi change above dynamo.
 set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
+REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)
 source "$REPO_ROOT/config/versions.env"
 source "$REPO_ROOT/config/cluster.env"
 
@@ -49,7 +49,7 @@ sudo -g docker /usr/bin/docker-wrapper build \
     --build-arg NATS_SHA256="$NATS_SHA256" \
     --build-arg DYNAMO_VERSION="$DYNAMO_VERSION" \
     -t "$FULL_IMAGE" \
-    -f "$REPO_ROOT/Dockerfile.control-plane" \
+    -f "$REPO_ROOT/docker/control-plane/Dockerfile" \
     "$REPO_ROOT"
 
 echo ""

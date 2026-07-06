@@ -27,7 +27,7 @@ EXTRA_ARGS=()
 
 run() {
     echo "=== $(date) : ISL=$1 OSL=$2 conc=$3 prompts=$4 ==="
-    bash scripts/benchmark.sh "${EXTRA_ARGS[@]}" \
+    bash bench/run.sh "${EXTRA_ARGS[@]}" \
         --input-len "$1" --output-len "$2" --concurrency "$3" --num-prompts "$4" --result-dir "$RESULT_DIR"
     echo "=== done: ISL=$1 OSL=$2 conc=$3 $(date) ==="
     echo ""

@@ -19,7 +19,7 @@ flowchart LR
 ```
 
 `coe_api`/BAR2 runtime connector libs are self-built from a pinned commit of SambaNova's software
-repo and baked directly into the RDU Docker image (`scripts/build_bar2.sh`, pin in
+repo and baked directly into the RDU Docker image (`build/bar2.sh`, pin in
 `config/versions.env`).
 
 Both sides install plain `ai-dynamo`/`ai-dynamo-runtime`, never the `[vllm]` extra — that extra
@@ -34,16 +34,17 @@ All external dependencies are pinned to exact commit SHAs in `config/versions.en
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/build_rdu_env.sh` | Fetch/build fast-coe, UCX, NIXL, and the vllm+cpu wheel (RDU side) |
-| `scripts/build_bar2.sh` | Self-build coe_api/rdu_engine + the BAR2 runtime connector libs |
-| `scripts/build_docker_gpu.sh` | Build + push the GPU prefill Docker image |
-| `scripts/build_docker_control_plane.sh` | Build + push the control-plane Docker image |
-| `scripts/build_docker_rdu.sh` | Build + push the RDU decode Docker image |
+| `build/rdu_env.sh` | Fetch/build fast-coe, UCX, NIXL, and the vllm+cpu wheel (RDU side) |
+| `build/bar2.sh` | Self-build coe_api/rdu_engine + the BAR2 runtime connector libs |
+| `docker/gpu/build.sh` | Build + push the GPU prefill Docker image |
+| `docker/control-plane/build.sh` | Build + push the control-plane Docker image |
+| `docker/rdu/build.sh` | Build + push the RDU decode Docker image |
+| `launch/control_plane.sh` | Launch (or `--stop`) the control-plane container |
 | `launch/gpu_prefill.sh` | Launch the GPU prefill worker |
-| `scripts/_run_docker_rdu_decode.sh` | Launch the RDU decode worker (invoked via `snrdu`) |
-| `scripts/benchmark.sh` | Run one benchmark config |
-| `scripts/_run_benchmark_sweep.sh` | Run the standard 9-config benchmark sweep |
-| `scripts/test_docker_rdu_e2e.sh` | End-to-end smoke test of the RDU decode image |
+| `launch/rdu_decode.sh` | Launch the RDU decode worker (invoked via `snrdu`) |
+| `bench/run.sh` | Run one benchmark config |
+| `bench/sweep.sh` | Run the standard 9-config benchmark sweep |
+| `test/e2e_rdu_decode.sh` | End-to-end smoke test of the RDU decode image |
 
 ---
 
@@ -97,24 +98,24 @@ git clone https://github.com/SemiAnalysisAI/InferenceX.git "$REPO/InferenceX"
 git -C "$REPO/InferenceX" checkout "$INFERENCEX_COMMIT"
 
 # 2. Build GPU prefill Docker image (~20 min, login node, no GPU required)
-bash scripts/build_docker_gpu.sh
+bash docker/gpu/build.sh
 
 # 3. Fetch fast-coe source and build UCX/NIXL + the +cpu vllm wheel from
 #    source — all in one script, two phases (login node needs internet;
 #    RDU-node build takes ~5 min total).
-bash scripts/build_rdu_env.sh --fetch-only
+bash build/rdu_env.sh --fetch-only
 snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
     --allow-local-lib-python --reservation "$RDU_RESERVATION" \
     --pef "$PEF" --timeout "$RDU_TIMEOUT" -o logs/build_rdu_env.log \
-    -- bash scripts/build_rdu_env.sh --build-only
+    -- bash build/rdu_env.sh --build-only
 
 # 4. Self-build coe_api/rdu_engine + the BAR2 runtime connector libs (required
-#    by build_docker_rdu.sh below) — same two-phase pattern.
-bash scripts/build_bar2.sh --fetch-only
+#    by docker/rdu/build.sh below) — same two-phase pattern.
+bash build/bar2.sh --fetch-only
 snrdu run -sp "$RDU_PARTITION" --qos "$RDU_QOS" --nodelist "$RDU_NODE" \
     --allow-local-lib-python --reservation "$RDU_RESERVATION" \
     --pef "$PEF" --timeout "$RDU_TIMEOUT" -o logs/build_bar2.log \
-    -- bash scripts/build_bar2.sh --build-only
+    -- bash build/bar2.sh --build-only
 ```
 
 ---
@@ -125,31 +126,25 @@ All three components (control plane, GPU prefill, RDU decode) run as Docker cont
 Build the images once:
 
 ```bash
-bash scripts/build_docker_control_plane.sh   # -> $CONTROL_PLANE_IMAGE (config/cluster.env)
-bash scripts/build_docker_gpu.sh             # -> $GPU_IMAGE (config/cluster.env)
-bash scripts/build_docker_rdu.sh             # -> $RDU_IMAGE (config/cluster.env) — bakes in
-                                              #    self-built coe_api/rdu_engine + BAR2 runtime
-                                              #    connector libs (scripts/build_bar2.sh)
+bash docker/control-plane/build.sh   # -> $CONTROL_PLANE_IMAGE (config/cluster.env)
+bash docker/gpu/build.sh             # -> $GPU_IMAGE (config/cluster.env)
+bash docker/rdu/build.sh             # -> $RDU_IMAGE (config/cluster.env) — bakes in
+                                      #    self-built coe_api/rdu_engine + BAR2 runtime
+                                      #    connector libs (build/bar2.sh)
 ```
 
 Then launch, in order:
 
 ```bash
 # 1. Control plane — etcd + NATS + dynamo.frontend in one container, --net=host on the login node
-#    NOTE: use -e VAR="$VAR" (explicit value), not bare -e VAR — sudo strips the calling
-#    shell's environment by default, so bare -e VAR forwards an EMPTY value and the
-#    entrypoint fails with "CONTROL_PLANE_IP must be set".
-sudo -g docker /usr/bin/docker-run-wrapper --pull=always --net=host --rm \
-    --name rdu-hdi-control-plane \
-    -e CONTROL_PLANE_IP="$CONTROL_PLANE_IP" -e ETCD_PORT="$ETCD_PORT" \
-    -e NATS_PORT="$NATS_PORT" -e VLLM_PORT="$VLLM_PORT" \
-    "$CONTROL_PLANE_IMAGE" &   # (source config/cluster.env first; run in the background, this is persistent)
+source config/cluster.env
+bash launch/control_plane.sh &   # persistent; backgrounded
 
 # 2. GPU prefill (~10 min: model load + warmup)
 bash launch/gpu_prefill.sh
 
 # 3. RDU decode — waits for GPU registration, then ~12-14 min BAR2/PEF init
-#    via snrdu on the RDU node, see scripts/_run_docker_rdu_decode.sh for the
+#    via snrdu on the RDU node, see launch/rdu_decode.sh for the
 #    full docker-run-wrapper invocation (--net=host, --device /dev/rdu
 #    --device /dev/rdu_mem_map --device /dev/infiniband, --ulimit memlock=-1,
 #    --cap-add IPC_LOCK, and MODEL/SERVED_MODEL_NAME/MAX_MODEL_LEN/PEF/
@@ -167,21 +162,21 @@ curl -s http://localhost:18000/v1/completions \
 ## Benchmark
 
 ```bash
-bash scripts/benchmark.sh --input-len 1000 --output-len 1000 --concurrency 1
+bash bench/run.sh --input-len 1000 --output-len 1000 --concurrency 1
 ```
 
 Results saved to `benchmark_results/` (gitignored). To run the standard 9-config sweep (ISL
 1k/10k/100k × concurrency 1/2/4) against a given endpoint in one shot:
 
 ```bash
-bash scripts/_run_benchmark_sweep.sh --label my_run [--endpoint http://HOST:PORT] [--model NAME]
+bash bench/sweep.sh --label my_run [--endpoint http://HOST:PORT] [--model NAME]
 ```
 
 ## Teardown
 
 ```bash
 # Control plane: stop the container (started with --rm, so it self-removes)
-sudo -g docker /usr/bin/docker-wrapper exec rdu-hdi-control-plane sh -c 'kill -TERM 1'
+bash launch/control_plane.sh --stop
 
 # GPU prefill + RDU decode: cancel their SLURM jobs
 scancel $(squeue -u $USER -h -o '%i')
@@ -197,7 +192,7 @@ Three wrappers on the cluster:
 |---------|-------|---------|
 | `/usr/bin/docker-wrapper` | Login node | build, push, pull, ps, … (not `run`) |
 | `/usr/bin/cuda-docker-run-wrapper` | GPU nodes | run only (GPU passthrough + `/import`,`/scratch` auto-mount) |
-| `/usr/bin/docker-run-wrapper` | RDU nodes | run only (`/import`,`/scratch` auto-mount; device passthrough and RDMA still need explicit flags — see `scripts/test_docker_rdu_e2e.sh`) |
+| `/usr/bin/docker-run-wrapper` | RDU nodes | run only (`/import`,`/scratch` auto-mount; device passthrough and RDMA still need explicit flags — see `test/e2e_rdu_decode.sh`) |
 
 All three require `sudo -g docker` (via `sudo -g docker /usr/bin/<wrapper>`). Internal registry:
 `sc-artifacts2.sambanovasystems.com/sw-docker-scratch/`. `--net=host` required on both GPU and RDU
@@ -217,28 +212,28 @@ The only genuinely external assets this stack reads from a network filesystem at
 2. **The PEF** — `PEF` (`config/model.env`, `/import/...`) and the identical path embedded as
    `MINI_PEF_FP8` in `config/minimax_m2.yaml`.
 3. **`BRCM_ROCELIB`** (`/import/it-tools/idc/fw/brcm/237/bcm_237.1.148.0a/drivers_linux/bnxt_rocelib`)
-   — build-time only, staged into the build context and `COPY`'d into `Dockerfile.gpu`; never
+   — build-time only, staged into the build context and `COPY`'d into `docker/gpu/Dockerfile`; never
    referenced at container runtime.
 
 Two more `/import` reads exist but are repo-owned, not external dependencies: `MODEL_CONFIG`
 (`config/minimax_m2.yaml`, tracked in this repo) and GPU prefill's cache dirs (`.gpu_cache/`,
 gitignored scratch space). Both are reachable only because `cuda-docker-run-wrapper`/
 `docker-run-wrapper` auto-mount `/import`/`/scratch` with no explicit `-v` flags anywhere in
-`launch/gpu_prefill.sh` or `scripts/_run_docker_rdu_decode.sh` — worth re-checking if this stack is
+`launch/gpu_prefill.sh` or `launch/rdu_decode.sh` — worth re-checking if this stack is
 ever deployed somewhere without that auto-mount convention (e.g. a future k8s deploy).
 
 ## Known gaps
 
-`patches/` is split by which side each override applies to — `patches/gpu/` (used by `Dockerfile.gpu`) and `patches/rdu/` (used by `scripts/build_rdu_env.sh`). Both a full-file overlay (`.py`, copied wholesale) and a unified diff (`.patch`, applied via `patch -p1`) can appear on either side; the extension tells you which. These exist here, rather than as commits on a branch, only because vllm and ai-dynamo are third-party packages this repo doesn't control a fork of — for internal repos we do control (like `SambaNova/software`, see `config/versions.env`'s `SOFTWARE_REPO_*`), changes are pushed as a real branch/commit and pinned directly, not carried as a local patch file.
+`patches/` is split by which side each override applies to — `patches/gpu/` (used by `docker/gpu/Dockerfile`) and `patches/rdu/` (used by `build/rdu_env.sh`). Both a full-file overlay (`.py`, copied wholesale) and a unified diff (`.patch`, applied via `patch -p1`) can appear on either side; the extension tells you which. These exist here, rather than as commits on a branch, only because vllm and ai-dynamo are third-party packages this repo doesn't control a fork of — for internal repos we do control (like `SambaNova/software`, see `config/versions.env`'s `SOFTWARE_REPO_*`), changes are pushed as a real branch/commit and pinned directly, not carried as a local patch file.
 
-GPU side (`Dockerfile.gpu`, `patches/gpu/`):
+GPU side (`docker/gpu/Dockerfile`, `patches/gpu/`):
 - **vllm nixl_connector patch**: `REGISTER_CONSUMER_MSG` not in stock vllm 0.16.0 — fixed by overlaying `patches/gpu/nixl_connector.py`, sourced from `sambanova/sn_vllm`.
-- **dynamo.vllm protocol patch**: `ai-dynamo 1.2.1` imports `MultiModalUUIDDict` from vllm (added in 0.20.x). Patched inline in `Dockerfile.gpu` to be conditional (same fix as the RDU side below, implemented independently rather than sharing a file — keep both in sync by hand if this logic ever changes).
+- **dynamo.vllm protocol patch**: `ai-dynamo 1.2.1` imports `MultiModalUUIDDict` from vllm (added in 0.20.x). Patched inline in `docker/gpu/Dockerfile` to be conditional (same fix as the RDU side below, implemented independently rather than sharing a file — keep both in sync by hand if this logic ever changes).
 
-RDU side (`scripts/build_rdu_env.sh`, `patches/rdu/`):
-- **dynamo.vllm protocol patch**: same `MultiModalUUIDDict` gap as above, applied here via `patches/rdu/dynamo_multimodal_protocol.patch`. The RDU side does *not* need the `REGISTER_CONSUMER_MSG` patch — `VLLM_PD_CHUNK_OVERLAP` is hardcoded to `0` in `docker/rdu-decode-entrypoint.sh` and `launch/gpu_prefill.sh`, so the feature it enables is never used.
-- **RDU torch compat**: s339 has `torch 2.2.0+sn`; vllm 0.16.0 uses torch 2.4+ APIs. Two files patched by `build_rdu_env.sh`, one of them (`patches/rdu/vllm_env_override_torch22x.py`) a full-file replacement of vllm's own `env_override.py`. Long-term fix: RDU Docker image with matching torch.
-- **rdma-core devel headers**: s339 ships `libibverbs`/`librdmacm` runtime `.so.1` but not the `-devel` headers, and there's no package-manager access to install them. `build_rdu_env.sh --fetch-only` downloads a pinned, SHA256-verified header subset instead of searching the filesystem for them.
+RDU side (`build/rdu_env.sh`, `patches/rdu/`):
+- **dynamo.vllm protocol patch**: same `MultiModalUUIDDict` gap as above, applied here via `patches/rdu/dynamo_multimodal_protocol.patch`. The RDU side does *not* need the `REGISTER_CONSUMER_MSG` patch — `VLLM_PD_CHUNK_OVERLAP` is hardcoded to `0` in `docker/rdu/entrypoint.sh` and `launch/gpu_prefill.sh`, so the feature it enables is never used.
+- **RDU torch compat**: s339 has `torch 2.2.0+sn`; vllm 0.16.0 uses torch 2.4+ APIs. Two files patched by `build/rdu_env.sh`, one of them (`patches/rdu/vllm_env_override_torch22x.py`) a full-file replacement of vllm's own `env_override.py`. Long-term fix: RDU Docker image with matching torch.
+- **rdma-core devel headers**: s339 ships `libibverbs`/`librdmacm` runtime `.so.1` but not the `-devel` headers, and there's no package-manager access to install them. `build/rdu_env.sh --fetch-only` downloads a pinned, SHA256-verified header subset instead of searching the filesystem for them.
 
 ## Component repos
 
@@ -261,7 +256,7 @@ Key non-obvious fixes baked into the image:
 
 ## RDU decode — notes
 
-Key non-obvious fixes baked into the image (`Dockerfile.rdu`, `docker/rdu-decode-entrypoint.sh`):
+Key non-obvious fixes baked into the image (`docker/rdu/Dockerfile`, `docker/rdu/entrypoint.sh`):
 
 1. **SambaNova's `bnxt_re` RDMA provider replacement**: RDU nodes deliberately disable the stock
    rdma-core `bnxt_re` userspace provider in favor of a SambaNova-supplied one — a different bug
@@ -270,10 +265,10 @@ Key non-obvious fixes baked into the image (`Dockerfile.rdu`, `docker/rdu-decode
    the repo config to `dnf install sambanova-deps-brcm-roce-userland` directly (pinned in
    `config/versions.env`'s `BRCM_ROCE_USERLAND_VERSION`) — the same RPM that provisions real
    bare-metal RDU nodes. That package's own postinstall script has a real gap (it swaps the driver
-   registration file back into place but not the `.so` itself), so `Dockerfile.rdu` finishes the
-   swap with one explicit `cp` after the `dnf install`.
-2. **`coe_api`/BAR2 runtime connector libs are baked in** (self-built, see `scripts/build_bar2.sh`
+   registration file back into place but not the `.so` itself), so `docker/rdu/Dockerfile` finishes
+   the swap with one explicit `cp` after the `dnf install`.
+2. **`coe_api`/BAR2 runtime connector libs are baked in** (self-built, see `build/bar2.sh`
    and the architecture note above). `rdu_engine`'s compiled extension also transitively needs
    `libmpi.so.12` and a few abseil/circllhist libs — these ship inside `rhel810-dev` under
-   `/opt/sambanova/lib` but aren't on the default `LD_LIBRARY_PATH`; `Dockerfile.rdu` adds that
-   directory explicitly.
+   `/opt/sambanova/lib` but aren't on the default `LD_LIBRARY_PATH`; `docker/rdu/Dockerfile` adds
+   that directory explicitly.
