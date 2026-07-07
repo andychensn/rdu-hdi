@@ -17,6 +17,9 @@
 #   --seed           N                 (default: unique per invocation, see below)
 #   --result-dir     DIR               (default: $REPO_ROOT/benchmark_results)
 #
+# Any other flag (e.g. --save-detailed) is passed through as-is to
+# benchmark_serving.py.
+#
 # NOTE on --seed: InferenceX's benchmark_serving.py defaults --seed to a
 # hardcoded 0 if not passed, and its "random" dataset generator is otherwise
 # deterministic given (seed, input-len, num-prompts) — so back-to-back runs
@@ -48,6 +51,8 @@ RESULT_DIR="$REPO_ROOT/benchmark_results"
 # Unique per invocation (PID + seconds-since-epoch, masked to fit a plausible
 # int32 seed) unless overridden — see the --seed note above.
 SEED=$(( ($(date +%s) * 1000 + $$) % 2147483647 ))
+# Unrecognized flags are passed through as-is to benchmark_serving.py.
+PASSTHROUGH_ARGS=()
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -61,7 +66,7 @@ while [[ $# -gt 0 ]]; do
         --num-prompts) NUM_PROMPTS="$2"; shift 2 ;;
         --seed)       SEED="$2";        shift 2 ;;
         --result-dir) RESULT_DIR="$2";  shift 2 ;;
-        *) echo "Unknown arg: $1"; exit 1 ;;
+        *) PASSTHROUGH_ARGS+=("$1");    shift 1 ;;
     esac
 done
 
@@ -123,4 +128,5 @@ cd "$BENCH_DIR"
     --save-result \
     --result-dir "$RESULT_DIR" \
     --percentile-metrics "ttft,tpot,itl,e2el" \
-    --metric-percentiles "90,99,99.9"
+    --metric-percentiles "90,99,99.9" \
+    "${PASSTHROUGH_ARGS[@]}"
