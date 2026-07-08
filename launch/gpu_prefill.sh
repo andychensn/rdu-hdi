@@ -43,6 +43,18 @@ if [[ "${1:-}" == "--inner" ]]; then
     for dev in /dev/infiniband /dev/uverbs* /dev/nvidia-uvm /dev/nvidiactl; do
         [ -e "$dev" ] && RDMA_DEVICES="$RDMA_DEVICES --device $dev"
     done
+    # Background GPU telemetry sampler — a plain child process of this SAME
+    # SLURM step (not a new srun/step), so it never touches --overlap's
+    # broken step-creation path on this cluster (see
+    # docs/local/GPU_PREFILL_PARITY_INVESTIGATION.md). exec below only
+    # replaces this process's own image; already-forked background children
+    # are unaffected and keep running until the job's cgroup is torn down.
+    SMI_LOG="$LOG_DIR/gpu_telemetry_${IDX}_job${SLURM_JOB_ID}.csv"
+    nvidia-smi --query-gpu=timestamp,index,utilization.gpu,power.draw,clocks.sm,temperature.gpu \
+        --format=csv,noheader -lms 100 > "$SMI_LOG" 2>&1 &
+    disown $!
+    echo "    GPU telemetry: $SMI_LOG"
+
     exec sudo -g docker /usr/bin/cuda-docker-run-wrapper \
         --pull=always \
         --net=host --rm \
