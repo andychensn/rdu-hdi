@@ -122,27 +122,18 @@ def main():
     QUEUE_COLOR = "#bdc3c7"
     XFER_COLOR = "#f39c12"
 
-    fig, axes = plt.subplots(
-        5, 1, figsize=(18, 14), sharex=True,
-        gridspec_kw={"hspace": 0.15, "height_ratios": [1.3, 1, 1, 1, 1]},
-    )
-    fig.suptitle(
-        f"Per-request phase timeline + GPU telemetry{(' — ' + args.title) if args.title else ''}",
-        fontsize=12,
-        fontweight="bold",
-    )
-
-    # ── Panel 0: per-request phase Gantt (queue -> prefill -> KV transfer) ──
-    gantt_ax = axes[0]
-    workers = list(smi_map.keys())
-    row_y = {w: i for i, w in enumerate(workers)}
-    bar_h = 0.6
+    # One row per REQUEST (not per worker) in the Gantt panel -- at
+    # concurrency > 1, multiple requests can be queued/computing on the same
+    # worker at once, and cramming them onto one row per worker makes them
+    # unreadably overlapped. One row per request instead directly shows how
+    # many requests are in flight at any given time, with zero overlap.
+    per_worker_idx = defaultdict(int)
+    gantt_rows = []
     has_xfer = False
     for rec in events:
         worker = rec.get("worker")
-        if worker not in row_y:
+        if worker not in color_by_worker:
             continue
-        y = row_y[worker] - bar_h / 2
         t_recv = rec.get("t_received")
         t_start = rec.get("t_started")
         t_kv = rec.get("t_kv_ready")
@@ -156,14 +147,52 @@ def main():
         if t_xfer_s is not None and t_xfer_e is not None:
             segs.append((t_xfer_s - args.start, t_xfer_e - t_xfer_s, XFER_COLOR))
             has_xfer = True
-        if segs:
-            gantt_ax.broken_barh([(s[0], s[1]) for s in segs], (y, bar_h),
-                                  facecolors=[s[2] for s in segs], edgecolor="none")
+        if not segs:
+            continue
+        per_worker_idx[worker] += 1
+        row_end = max(s[0] + s[1] for s in segs)
+        row_start = min(s[0] for s in segs)
+        label_txt = f"{worker}#{per_worker_idx[worker]} {round((row_end - row_start) * 1000)}ms"
+        gantt_rows.append((t_recv, worker, segs, row_end, label_txt))
 
-    gantt_ax.set_yticks(list(row_y.values()))
-    gantt_ax.set_yticklabels(workers, fontsize=9)
-    gantt_ax.set_ylim(-1, len(workers))
-    gantt_ax.set_ylabel("Request phases", fontsize=9)
+    gantt_rows.sort(key=lambda r: r[0])
+    n_rows = len(gantt_rows)
+
+    ROW_IN = 0.26          # inches per request row
+    TELEMETRY_IN = 2.6     # inches per telemetry panel
+    gantt_in = max(2.0, n_rows * ROW_IN + 0.8)
+    fig_h = gantt_in + 4 * TELEMETRY_IN
+
+    fig, axes = plt.subplots(
+        5, 1, figsize=(18, fig_h), sharex=True,
+        gridspec_kw={"hspace": 0.15, "height_ratios": [gantt_in, TELEMETRY_IN, TELEMETRY_IN, TELEMETRY_IN, TELEMETRY_IN]},
+    )
+    fig.suptitle(
+        f"Per-request phase timeline + GPU telemetry{(' — ' + args.title) if args.title else ''}",
+        fontsize=12,
+        fontweight="bold",
+    )
+
+    # ── Panel 0: per-request phase Gantt (queue -> prefill -> KV transfer), one row per request ──
+    gantt_ax = axes[0]
+    bar_h = 0.8
+    for i, (t_recv, worker, segs, row_end, label_txt) in enumerate(gantt_rows):
+        y = i - bar_h / 2
+        gantt_ax.broken_barh([(s[0], s[1]) for s in segs], (y, bar_h),
+                              facecolors=[s[2] for s in segs], edgecolor="none")
+        gantt_ax.annotate(
+            label_txt, xy=(row_end, i), xytext=(4, 0), textcoords="offset points",
+            ha="left", va="center", fontsize=5.5, color=color_by_worker[worker],
+            annotation_clip=False,
+        )
+
+    gantt_ax.set_yticks([])
+    gantt_ax.set_ylim(-1, n_rows)
+    gantt_ax.invert_yaxis()  # earliest-arriving request at the top
+    # NOTE: x-axis is shared across all 5 panels -- don't call set_xlim here,
+    # it would also clip the telemetry panels below. annotation_clip=False on
+    # the end-of-row labels above lets them draw past the data range instead.
+    gantt_ax.set_ylabel(f"Requests ({n_rows}), by arrival", fontsize=9)
     gantt_ax.grid(axis="x", linestyle=":", linewidth=0.5, alpha=0.5)
     gantt_ax.spines["top"].set_visible(False)
     gantt_ax.spines["right"].set_visible(False)
@@ -199,10 +228,11 @@ def main():
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-    # Per-request shaded spans + labels, on the utilization panel only (else too busy)
+    # Per-request shaded spans (queue+prefill window) on the utilization panel,
+    # for visual correlation with the GPU trace below -- no text labels here
+    # (full per-request detail, including duration, lives in the Gantt panel
+    # above; labeling every request here too gets unreadable at concurrency > 1).
     util_ax = axes[1]
-    per_worker_counts = defaultdict(int)
-    spans = []
     for rec in events:
         worker = rec.get("worker")
         if worker not in color_by_worker:
@@ -211,33 +241,10 @@ def main():
         t1 = rec.get("t_kv_ready") or rec.get("t_completed")
         if t0 is None or t1 is None:
             continue
-        per_worker_counts[worker] += 1
-        idx = per_worker_counts[worker]
         util_ax.axvspan(t0 - args.start, t1 - args.start, color=color_by_worker[worker], alpha=0.12, lw=0)
-        spans.append((t0, t1, worker, idx, rec.get("compute_ms")))
-
-    # Stagger labels across a few vertical levels by GLOBAL time order (not
-    # per-worker) so adjacent bumps close in time don't overlap regardless of
-    # which worker they belong to.
-    spans.sort(key=lambda s: s[0])
-    levels = [104, 116, 128]
-    for i, (t0, t1, worker, idx, compute_ms) in enumerate(spans):
-        c = color_by_worker[worker]
-        label_txt = f"{worker}#{idx}" + (f" {compute_ms}ms" if compute_ms else "")
-        util_ax.annotate(
-            label_txt,
-            xy=((t0 + t1) / 2 - args.start, levels[i % len(levels)]),
-            ha="center",
-            va="bottom",
-            fontsize=6,
-            rotation=60,
-            color=c,
-            annotation_clip=False,
-        )
 
     util_ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
     axes[-1].set_xlabel("Time (seconds from benchmark start)", fontsize=10)
-    util_ax.set_ylim(0, 145)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(args.output, dpi=150, bbox_inches="tight")
     print(f"Chart saved -> {args.output}")
