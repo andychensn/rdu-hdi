@@ -228,20 +228,7 @@ def main():
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
-    # Per-request shaded spans (queue+prefill window) on the utilization panel,
-    # for visual correlation with the GPU trace below -- no text labels here
-    # (full per-request detail, including duration, lives in the Gantt panel
-    # above; labeling every request here too gets unreadable at concurrency > 1).
     util_ax = axes[1]
-    for rec in events:
-        worker = rec.get("worker")
-        if worker not in color_by_worker:
-            continue
-        t0 = rec.get("t_received")
-        t1 = rec.get("t_kv_ready") or rec.get("t_completed")
-        if t0 is None or t1 is None:
-            continue
-        util_ax.axvspan(t0 - args.start, t1 - args.start, color=color_by_worker[worker], alpha=0.12, lw=0)
 
     util_ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
     axes[-1].set_xlabel("Time (seconds from benchmark start)", fontsize=10)
