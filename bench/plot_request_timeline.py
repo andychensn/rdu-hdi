@@ -41,8 +41,13 @@ def strip_unit(s):
     return float(v) if v not in ("", "-") else None
 
 
-def parse_smi_csv(path, tz_offset_hours):
-    """nvidia-smi -lms output: timestamp,index,util,power,clock,temp (local node time)."""
+def parse_smi_csv(path, tz_offset_hours, start=None, end=None, pad_seconds=10.0):
+    """nvidia-smi -lms output: timestamp,index,util,power,clock,temp (local node time).
+
+    These CSVs accumulate for the worker's entire job lifetime (often much
+    longer than any single benchmark run) -- filter to [start-pad, end+pad]
+    so a short benchmark isn't squeezed into a sliver of a much wider axis.
+    """
     rows = defaultdict(list)  # gpu_index -> [(unix_ts_utc, util, power, clock, temp), ...]
     with open(path, errors="replace") as f:
         for line in f:
@@ -55,6 +60,10 @@ def parse_smi_csv(path, tz_offset_hours):
                 continue
             dt_utc = dt.replace(tzinfo=timezone.utc) + timedelta(hours=tz_offset_hours)
             ts = dt_utc.timestamp()
+            if start is not None and ts < start - pad_seconds:
+                continue
+            if end is not None and ts > end + pad_seconds:
+                continue
             try:
                 gpu = int(parts[1])
             except ValueError:
@@ -104,7 +113,7 @@ def main():
     smi_map = {}
     for spec in args.smi:
         label, path = spec.split("=", 1)
-        smi_map[label] = parse_smi_csv(path, args.tz_offset_hours)
+        smi_map[label] = parse_smi_csv(path, args.tz_offset_hours, args.start, args.end)
 
     events = json.load(open(args.events))
 
@@ -160,7 +169,7 @@ def main():
     gantt_ax.spines["right"].set_visible(False)
     legend_handles = [
         plt.Rectangle((0, 0), 1, 1, color=QUEUE_COLOR, label="queue (arrived, waiting)"),
-        plt.Rectangle((0, 0), 1, 1, color="#7f8c8d", label="prefill compute"),
+        plt.Rectangle((0, 0), 1, 1, color="#7f8c8d", label="prefill compute (worker's own color)"),
     ]
     if has_xfer:
         legend_handles.append(plt.Rectangle((0, 0), 1, 1, color=XFER_COLOR, label="KV transfer"))
