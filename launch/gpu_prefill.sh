@@ -50,12 +50,62 @@ if [[ "${1:-}" == "--inner" ]]; then
     # replaces this process's own image; already-forked background children
     # are unaffected and keep running until the job's cgroup is torn down.
     SMI_LOG="$LOG_DIR/gpu_telemetry_${IDX}_job${SLURM_JOB_ID}.csv"
-    nvidia-smi --query-gpu=timestamp,index,utilization.gpu,power.draw,clocks.sm,temperature.gpu \
+    # GPU_TELEMETRY_FULL=1 captures nvidia-smi's throttle-reason bitmask fields
+    # (hw/sw thermal slowdown, power cap, etc.) plus fan/PCIe/memory-temp/clock
+    # detail, for directly distinguishing WHY the driver is throttling rather
+    # than just observing temp+clock correlate (see
+    # docs/local/GPU_PREFILL_PARITY_INVESTIGATION.md's causality follow-up).
+    # Default stays the lean 6-field query to avoid bloating routine runs.
+    if [[ "${GPU_TELEMETRY_FULL:-0}" == "1" ]]; then
+        SMI_FIELDS="timestamp,index,utilization.gpu,utilization.memory,power.draw,power.limit,enforced.power.limit,clocks.current.sm,clocks.current.memory,clocks.max.sm,temperature.gpu,temperature.gpu.tlimit,temperature.memory,fan.speed,pcie.link.gen.current,pcie.link.width.current,clocks_throttle_reasons.active,clocks_throttle_reasons.hw_slowdown,clocks_throttle_reasons.hw_thermal_slowdown,clocks_throttle_reasons.sw_thermal_slowdown,clocks_throttle_reasons.sw_power_cap,clocks_throttle_reasons.hw_power_brake_slowdown,clocks_throttle_reasons.sync_boost,clocks_throttle_reasons.gpu_idle"
+    else
+        SMI_FIELDS="timestamp,index,utilization.gpu,power.draw,clocks.sm,temperature.gpu"
+    fi
+    nvidia-smi --query-gpu="$SMI_FIELDS" \
         --format=csv,noheader -lms 100 > "$SMI_LOG" 2>&1 &
     disown $!
-    echo "    GPU telemetry: $SMI_LOG"
+    echo "    GPU telemetry: $SMI_LOG (full=${GPU_TELEMETRY_FULL:-0})"
 
-    exec sudo -g docker /usr/bin/cuda-docker-run-wrapper \
+    # Optional explicit physical-GPU-combo override, for testing arbitrary (not
+    # just contiguous) GPU sets with a single TP-N worker -- e.g. GPU_EXPLICIT_DEVICES=1,4,5,7
+    # to mix a known-hot unit into an otherwise-cool set, or vice versa (see
+    # docs/local/GPU_PREFILL_PARITY_INVESTIGATION.md). Requires requesting the
+    # WHOLE node (GPU_GRES=gpu:8) so every physical device is in this job's
+    # cgroup device whitelist -- cuda-docker-run-wrapper does nothing but
+    # forward whatever $CUDA_VISIBLE_DEVICES already is as -e NVIDIA_VISIBLE_DEVICES
+    # (confirmed by reading /usr/bin/cuda-docker-run-wrapper directly), so
+    # overriding the env var here, before exec, is sufficient -- no wrapper
+    # changes needed. Only meaningful with exactly one worker per node.
+    if [[ -n "${GPU_EXPLICIT_DEVICES:-}" ]]; then
+        echo "    Explicit GPU combo override: CUDA_VISIBLE_DEVICES $CUDA_VISIBLE_DEVICES -> $GPU_EXPLICIT_DEVICES"
+        export CUDA_VISIBLE_DEVICES="$GPU_EXPLICIT_DEVICES"
+    fi
+
+    # Optional CPU/memory NUMA-affinity override for the TTFT-growth causal
+    # test (docs/local/GPU_PREFILL_PARITY_INVESTIGATION.md) -- SUPERSEDED: the
+    # NUMA hypothesis was ruled out (root cause is single-GPU thermal
+    # throttling, not NUMA affinity), kept only because the mechanism itself
+    # (deliberately mismatching CPU-NUMA from GPU-NUMA) is reusable for future
+    # causal tests. SLURM assigns physical GPUs per-launch (not fixed per
+    # worker index -- this bit us twice already, see doc), so the override is
+    # computed from the ACTUAL $CUDA_VISIBLE_DEVICES this job got, not from a
+    # static worker-index table. sc3-c129 topology: GPUs{0,1}->NUMA0,
+    # {2,3}->NUMA1, {4,5}->NUMA2, {6,7}->NUMA3.
+    NUMACTL_PREFIX=()
+    if [[ "${GPU_NUMA_SWAP_TEST:-0}" == "1" ]]; then
+        FIRST_GPU="${CUDA_VISIBLE_DEVICES%%,*}"
+        case "$FIRST_GPU" in
+            0|1|2|3) FORCE_NUMA=3 ;;
+            4|5|6|7) FORCE_NUMA=2 ;;
+            *) echo "WARNING: unrecognized CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES, skipping NUMA override"; FORCE_NUMA="" ;;
+        esac
+        if [[ -n "$FORCE_NUMA" ]]; then
+            echo "    NUMA swap test: CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES -> forcing cpunodebind=membind=$FORCE_NUMA"
+            NUMACTL_PREFIX=(numactl "--cpunodebind=$FORCE_NUMA" "--membind=$FORCE_NUMA")
+        fi
+    fi
+
+    exec "${NUMACTL_PREFIX[@]}" sudo -g docker /usr/bin/cuda-docker-run-wrapper \
         --pull=always \
         --net=host --rm \
         --name "gpu-prefill-${IDX}" \
@@ -114,6 +164,7 @@ for i in "${!GPU_NODES[@]}"; do
     srun \
         -p "$GPU_PARTITION" -w "$node" \
         --gres="$GPU_GRES" \
+        --cpus-per-task="${GPU_CPUS:-2}" \
         --mem="$GPU_MEM" \
         --job-name="$JOB_NAME" \
         ${reservation:+--reservation "$reservation"} \
