@@ -110,13 +110,67 @@ def main():
 
     palette = ["#2980b9", "#e74c3c", "#27ae60", "#8e44ad"]
     color_by_worker = {label: palette[i % len(palette)] for i, label in enumerate(smi_map)}
+    QUEUE_COLOR = "#bdc3c7"
+    XFER_COLOR = "#f39c12"
 
-    fig, axes = plt.subplots(4, 1, figsize=(18, 12), sharex=True, gridspec_kw={"hspace": 0.12})
+    fig, axes = plt.subplots(
+        5, 1, figsize=(18, 14), sharex=True,
+        gridspec_kw={"hspace": 0.15, "height_ratios": [1.3, 1, 1, 1, 1]},
+    )
     fig.suptitle(
-        f"GPU telemetry with per-request events{(' — ' + args.title) if args.title else ''}",
+        f"Per-request phase timeline + GPU telemetry{(' — ' + args.title) if args.title else ''}",
         fontsize=12,
         fontweight="bold",
     )
+
+    # ── Panel 0: per-request phase Gantt (queue -> prefill -> KV transfer) ──
+    gantt_ax = axes[0]
+    workers = list(smi_map.keys())
+    row_y = {w: i for i, w in enumerate(workers)}
+    bar_h = 0.6
+    has_xfer = False
+    for rec in events:
+        worker = rec.get("worker")
+        if worker not in row_y:
+            continue
+        y = row_y[worker] - bar_h / 2
+        t_recv = rec.get("t_received")
+        t_start = rec.get("t_started")
+        t_kv = rec.get("t_kv_ready")
+        t_xfer_s = rec.get("t_xfer_start")
+        t_xfer_e = rec.get("t_xfer_end")
+        segs = []
+        if t_recv is not None and t_start is not None:
+            segs.append((t_recv - args.start, t_start - t_recv, QUEUE_COLOR))
+        if t_start is not None and t_kv is not None:
+            segs.append((t_start - args.start, t_kv - t_start, color_by_worker[worker]))
+        if t_xfer_s is not None and t_xfer_e is not None:
+            segs.append((t_xfer_s - args.start, t_xfer_e - t_xfer_s, XFER_COLOR))
+            has_xfer = True
+        if segs:
+            gantt_ax.broken_barh([(s[0], s[1]) for s in segs], (y, bar_h),
+                                  facecolors=[s[2] for s in segs], edgecolor="none")
+
+    gantt_ax.set_yticks(list(row_y.values()))
+    gantt_ax.set_yticklabels(workers, fontsize=9)
+    gantt_ax.set_ylim(-1, len(workers))
+    gantt_ax.set_ylabel("Request phases", fontsize=9)
+    gantt_ax.grid(axis="x", linestyle=":", linewidth=0.5, alpha=0.5)
+    gantt_ax.spines["top"].set_visible(False)
+    gantt_ax.spines["right"].set_visible(False)
+    legend_handles = [
+        plt.Rectangle((0, 0), 1, 1, color=QUEUE_COLOR, label="queue (arrived, waiting)"),
+        plt.Rectangle((0, 0), 1, 1, color="#7f8c8d", label="prefill compute"),
+    ]
+    if has_xfer:
+        legend_handles.append(plt.Rectangle((0, 0), 1, 1, color=XFER_COLOR, label="KV transfer"))
+    else:
+        gantt_ax.annotate(
+            "(no KV-transfer segments found -- decode log needs VLLM_RDU_PLUGIN_TIME_PROFILE=1)",
+            xy=(0.5, 1.02), xycoords="axes fraction", ha="center", fontsize=7, color="#999",
+        )
+    gantt_ax.legend(handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.85)
+
     panels = [
         (1, "GPU Utilization (%)", (0, 108)),
         (2, "Power (W)", None),
@@ -124,7 +178,7 @@ def main():
         (4, "Temperature (C)", None),
     ]
 
-    for ax, (field_idx, ylabel, ylim) in zip(axes, panels):
+    for ax, (field_idx, ylabel, ylim) in zip(axes[1:], panels):
         for label, rows in smi_map.items():
             ts, vals = group_series(rows, gpu_map[label], field_idx)
             t_rel = [t - args.start for t in ts]
@@ -137,7 +191,7 @@ def main():
         ax.spines["right"].set_visible(False)
 
     # Per-request shaded spans + labels, on the utilization panel only (else too busy)
-    util_ax = axes[0]
+    util_ax = axes[1]
     per_worker_counts = defaultdict(int)
     spans = []
     for rec in events:
@@ -172,9 +226,9 @@ def main():
             annotation_clip=False,
         )
 
-    axes[0].legend(loc="upper right", fontsize=9, framealpha=0.85)
+    util_ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
     axes[-1].set_xlabel("Time (seconds from benchmark start)", fontsize=10)
-    axes[0].set_ylim(0, 145)
+    util_ax.set_ylim(0, 145)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(args.output, dpi=150, bbox_inches="tight")
     print(f"Chart saved -> {args.output}")
