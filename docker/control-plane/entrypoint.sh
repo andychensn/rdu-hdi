@@ -11,6 +11,7 @@ set -euo pipefail
 : "${ETCD_PORT:=12379}"
 : "${NATS_PORT:=14222}"
 : "${VLLM_PORT:=18000}"
+: "${BLOCK_SIZE:=64}"
 
 ETCD_DATA_DIR="${ETCD_DATA_DIR:-/tmp/etcd-data}"
 mkdir -p "$ETCD_DATA_DIR"
@@ -36,8 +37,23 @@ echo "Starting NATS on 0.0.0.0:$NATS_PORT..."
 NATS_PID=$!
 sleep 1
 
-echo "Starting Dynamo frontend on 0.0.0.0:$VLLM_PORT..."
+echo "Starting Dynamo frontend on 0.0.0.0:$VLLM_PORT (router-mode kv, block-size $BLOCK_SIZE)..."
+# --router-mode kv: prefill-side KV-cache-aware + load-aware routing (Phase 2,
+# docs/local/XPYD_SCALING_DESIGN.md). Confirmed via live test that the default
+# round-robin mode ignores cache state entirely -- kv mode's cost function
+# blends cache-overlap credit with each worker's in-flight prefill-token load
+# (verified against the actual v1.2.1 source, not just docs).
+# --router-kv-overlap-score-credit 1.0 (default): favor cache/TTFT, matches
+# our long-shared-prefix (system-prompt/repo-context) workload.
+# --router-temperature 0.4 (NOT the 0.0 default): softmax-samples over cost
+# logits instead of deterministic argmin -- with only 2 prefill workers,
+# deterministic selection risks pinning all cache-hit traffic on one worker;
+# revisit as worker count grows and full determinism becomes safer.
 exec env \
     ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \
     NATS_SERVER="nats://$CONTROL_PLANE_IP:$NATS_PORT" \
-    python3 -m dynamo.frontend --http-port "$VLLM_PORT"
+    python3 -m dynamo.frontend --http-port "$VLLM_PORT" \
+        --router-mode kv \
+        --kv-cache-block-size "$BLOCK_SIZE" \
+        --router-kv-overlap-score-credit 1.0 \
+        --router-temperature 0.4

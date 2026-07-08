@@ -32,6 +32,14 @@ if [[ "${1:-}" == "--inner" ]]; then
     # the same fixed port (GPU_NIXL_BASE_PORT) when data_parallel_index=0, which
     # collides if two workers share a node under --net=host.
     NIXL_PORT=$((GPU_NIXL_BASE_PORT + IDX))
+    # Same collision pattern for the KV-events ZMQ publisher (Phase 2,
+    # docs/local/XPYD_SCALING_DESIGN.md): vLLM's KVEventsConfig defaults its
+    # publisher to a single hardcoded tcp://*:5557 -- two same-node workers
+    # under --net=host both try to bind it and the second one's engine core
+    # dies with zmq.error.ZMQError: Address already in use (hit live,
+    # 2026-07-08). Give each worker its own port, same fix shape as NIXL_PORT.
+    KV_EVENTS_PORT=$((GPU_KV_EVENTS_BASE_PORT + IDX))
+    KV_EVENTS_CONFIG="{\"enable_kv_cache_events\": true, \"endpoint\": \"tcp://*:${KV_EVENTS_PORT}\"}"
 
     echo "=== GPU prefill worker $IDX (Docker) on $(hostname) ==="
     echo "    image:      $GPU_IMAGE"
@@ -142,7 +150,8 @@ if [[ "${1:-}" == "--inner" ]]; then
             --enable-prefix-caching \
             --reasoning-parser minimax_m2_append_think \
             --trust-remote-code \
-            --kv-transfer-config "$KV_CONFIG"
+            --kv-transfer-config "$KV_CONFIG" \
+            --kv-events-config "$KV_EVENTS_CONFIG"
 fi
 
 # ── Outer: submit one SLURM job per configured worker, wait for all to register ──
