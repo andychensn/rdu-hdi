@@ -54,7 +54,8 @@ Two config files to edit before use:
 
 **`config/cluster.env`** — cluster topology (nodes, IPs, reservations, Docker image tag)
 ```bash
-GPU_NODE=sc3-c129           # your GPU node
+GPU_NODES=(sc3-c129)        # your GPU node(s) — one entry per prefill worker
+GPU_RESERVATIONS=(my-res)   # index-paired with GPU_NODES; "" omits --reservation
 GPU_ROCE_IP=10.17.176.33    # GPU node RoCE IP
 RDU_NODE=sc3-s339           # your RDU node
 RDU_ROCE_IP=10.17.112.29    # RDU node RoCE IP
