@@ -38,11 +38,11 @@ NATS_PID=$!
 sleep 1
 
 echo "Starting Dynamo frontend on 0.0.0.0:$VLLM_PORT (router-mode kv, block-size $BLOCK_SIZE)..."
-# --router-mode kv: prefill-side KV-cache-aware + load-aware routing (Phase 2,
-# docs/local/XPYD_SCALING_DESIGN.md). Confirmed via live test that the default
-# round-robin mode ignores cache state entirely -- kv mode's cost function
-# blends cache-overlap credit with each worker's in-flight prefill-token load
-# (verified against the actual v1.2.1 source, not just docs).
+# --router-mode kv: prefill-side KV-cache-aware + load-aware routing.
+# Confirmed via live test that the default round-robin mode ignores cache
+# state entirely -- kv mode's cost function blends cache-overlap credit with
+# each worker's in-flight prefill-token load (verified against the actual
+# ai-dynamo/dynamo v1.2.1 source, not just docs).
 # --router-kv-overlap-score-credit 1.0 (default): favor cache/TTFT, matches
 # our long-shared-prefix (system-prompt/repo-context) workload.
 # --router-temperature 0.4 (NOT the 0.0 default): softmax-samples over cost

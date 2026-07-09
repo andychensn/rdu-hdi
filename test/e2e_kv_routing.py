@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """E2E test: prove Dynamo's KV-cache-aware + load-aware prefill routing
-(Phase 2, docs/local/XPYD_SCALING_DESIGN.md) is actually active against a
-live stack, not just configured.
+(--router-mode kv, set up in docker/control-plane/entrypoint.sh and
+launch/gpu_prefill.sh) is actually active against a live stack, not just
+configured.
 
 Assumes control-plane + >=2 co-located GPU prefill workers + decode are
 ALREADY running (see launch/control_plane.sh, launch/gpu_prefill.sh,
 launch/rdu_decode.sh) -- same convention as test/e2e_rdu_decode.sh. Sends
 real requests against the live endpoint and reads each prefill worker's own
-log to determine which worker actually handled each request -- the same
-method used to manually validate this during Phase 2 development.
+log to determine which worker actually handled each request.
 
 Usage:
   python3 test/e2e_kv_routing.py
