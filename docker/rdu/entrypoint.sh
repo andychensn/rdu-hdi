@@ -80,8 +80,8 @@ RDU_CONFIG="$MODEL_CONFIG"
 }
 [ -n "$RDU_CONFIG" ] && echo "  rdu_config: $RDU_CONFIG (fast-coe schema, used as-is)"
 
-# Dynamo KV-router block-size fix (see docs/local/KV_ROUTER_BLOCK_SIZE_FIX_PLAN.md §3.0):
-# Dynamo's PrefillRouter is built from whichever model card it happens to see with
+# Dynamo KV-router block-size fix: Dynamo's PrefillRouter is built from
+# whichever model card it happens to see with
 # ModelType.Chat/Completions -- i.e. this decode worker's card -- and uses that same
 # block size to validate every KV-cache-block event GPU prefill publishes (see
 # convert.rs's equality-drop guard). RDUPlatform (rdu_hardware/platform.py) force-

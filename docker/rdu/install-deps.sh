@@ -98,17 +98,19 @@ fi
 # derived from cache_config.block_size (or engine cache-group metadata),
 # clobbering any value the launch script explicitly passed via
 # --additional-config. This repo's RDU decode worker needs to *announce* a
-# different kv_cache_block_size than its real cache_config.block_size (see
-# docs/local/KV_ROUTER_BLOCK_SIZE_FIX_PLAN.md Sec3.0: RDUPlatform force-sets
-# cache_config.block_size=256 to match the RDU's real physical paging chunk,
-# but Dynamo's PrefillRouter -- which validates GPU prefill's real 64-token
-# KV-cache events against whatever block size is registered for this model --
-# is built from decode's registered card, so decode must announce 64 there
-# without touching its real, correct cache_config.block_size=256). Patch
-# configure_kv_event_block_size to respect an already-set additional_config
-# value instead of always overwriting it.
+# different kv_cache_block_size than its real cache_config.block_size:
+# RDUPlatform (rdu_hardware/platform.py) force-sets cache_config.block_size=256
+# to match the RDU's real physical paging chunk, but Dynamo's PrefillRouter --
+# which validates GPU prefill's real 64-token KV-cache events against
+# whatever block size is registered for this model -- is built from decode's
+# registered card, so decode must announce 64 there without touching its
+# real, correct cache_config.block_size=256. Patch configure_kv_event_block_size
+# to respect an already-set additional_config value instead of always
+# overwriting it.
 CACHE_INFO_PY=$(find "$SITE_PACKAGES" -name "cache_info.py" -path "*/dynamo/vllm/*" 2>/dev/null | head -1)
-if [ -n "$CACHE_INFO_PY" ] && grep -q '^    vllm_config\.additional_config\[DYNAMO_KV_EVENT_BLOCK_SIZE_KEY\] = kv_event_block_size$' "$CACHE_INFO_PY" 2>/dev/null; then
+if [ -n "$CACHE_INFO_PY" ] \
+    && grep -q '^    vllm_config\.additional_config\[DYNAMO_KV_EVENT_BLOCK_SIZE_KEY\] = kv_event_block_size$' "$CACHE_INFO_PY" 2>/dev/null \
+    && grep -q '^    return kv_event_block_size$' "$CACHE_INFO_PY" 2>/dev/null; then
     sed -i \
         -e 's/^    vllm_config\.additional_config\[DYNAMO_KV_EVENT_BLOCK_SIZE_KEY\] = kv_event_block_size$/    vllm_config.additional_config.setdefault(DYNAMO_KV_EVENT_BLOCK_SIZE_KEY, kv_event_block_size)/' \
         -e 's/^    return kv_event_block_size$/    return vllm_config.additional_config[DYNAMO_KV_EVENT_BLOCK_SIZE_KEY]/' \
