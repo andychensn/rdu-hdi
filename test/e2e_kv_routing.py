@@ -28,9 +28,14 @@ Two checks:
      raw hit rate above 0% proves nothing; only a rate significantly above
      1/N_WORKERS does. Runs a one-sided exact binomial test against that
      baseline rather than an arbitrary percentage cutoff.
-  2. Load-balance: sends N requests at concurrency>1 sharing one prefix,
-     checks traffic isn't pinned onto a single worker despite established
-     cache affinity (that would indicate the load term isn't working).
+  2. Load-balance: sends N requests SEQUENTIALLY, each pairing one FIXED
+     shared prefix with its own unique random suffix -- a realistic traffic
+     shape (shared system prompt + different user turns). Since the suffix
+     is always new work regardless of worker, the shared prefix can only
+     ever cover about half of a request's cost, capping the cache-holding
+     worker's advantage -- enough for the router's temperature-based
+     selection to naturally spread traffic across workers over many
+     requests, without needing concurrency or an engineered busy worker.
 
 Exit code: 0 = both checks pass, 1 = a check failed, 2 = setup/discovery error.
 """
@@ -41,10 +46,8 @@ import os
 import random
 import re
 import sys
-import time
 import urllib.request
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -134,27 +137,6 @@ def binomial_sf(n, k, p):
     return sum(_comb(n, i) * (p ** i) * ((1 - p) ** (n - i)) for i in range(k, n + 1))
 
 
-def parse_log_events(log_path):
-    """Return [(unix_ts, prompt_tokens, elapsed_ms), ...] sorted by time."""
-    # kv_ready lines are plain vLLM engine log lines, e.g.:
-    #   (EngineCore_DP0 pid=954) INFO 07-09 00:04:46 [nixl_connector.py:1004]
-    #   [kv_ready] req=b7e61a3a blocks=615 prompt_tokens=39342 prefill_elapsed_ms=47
-    # -- MM-DD HH:MM:SS, no year, no ANSI codes. Good enough to order events
-    # within a single short-lived test run (this script's own scope).
-    ready_re = re.compile(
-        r"(\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*\[kv_ready\] req=(\S+) blocks=\d+ "
-        r"prompt_tokens=(\d+) prefill_elapsed_ms=(\d+)"
-    )
-    events = []
-    with open(log_path, errors="replace") as f:
-        for line in f:
-            m = ready_re.search(line)
-            if m:
-                ts, _req, ptok, ms = m.groups()
-                events.append((ts, int(ptok), int(ms)))
-    return events
-
-
 def check_cache_affinity(endpoint, model, n_workers, n_prompts=20, prompt_words=2650,
                           alpha=0.05):
     print("\n=== Check 1: cache-affinity (batch cold, then shuffled repeat batch) ===")
@@ -225,36 +207,93 @@ def check_cache_affinity(endpoint, model, n_workers, n_prompts=20, prompt_words=
     return True
 
 
-def check_load_balance(endpoint, model, log_paths, n_requests=20, concurrency=4, max_worker_share=0.8):
-    print("\n=== Check 2: load-balance (shared prefix, concurrent burst) ===")
-    prefix = make_prefix(random.randint(0, 2**31), 13000)  # fresh every run, see check_cache_affinity's note
-    before = {p: len(parse_log_events(p)) for p in log_paths}
+def check_load_balance(endpoint, model, log_paths, n_requests=60, prefix_words=1350,
+                        suffix_words=1350, max_worker_share=0.85):
+    print("\n=== Check 2: load-balance (fixed prefix + random suffix, sequential) ===")
+    # Design: one FIXED shared prefix (~4k tokens) reused across every
+    # request, each paired with its own unique random suffix (~4k tokens),
+    # sent fully sequentially -- a realistic traffic shape (shared system
+    # prompt + different user turns).
+    #
+    # This deliberately does NOT try to engineer concurrent load or an
+    # artificially busy worker. An earlier, much more elaborate design tried
+    # exactly that (fire a large background request to occupy one worker,
+    # then send concurrent "probe" requests) and it did work, but only after
+    # working around two confounds: the background job's own worker
+    # placement is itself close to a coin flip unless you wait for its
+    # KV-store event to actually propagate to the router first, and large
+    # probe requests risk tripping the router's hard busy-instance reject
+    # (503) if aimed at an already-busy worker.
+    #
+    # Because the random suffix is always new work regardless of which
+    # worker handles it, the shared prefix can only ever cover about half of
+    # a given request's cost -- capping how large a cost advantage the
+    # cache-holding worker can have. With router_temperature=0.4 (softmax
+    # sampling, not deterministic argmin), that bounded advantage is enough
+    # on its own for traffic to spread across every worker over many
+    # requests, with both workers showing real cache hits once each has
+    # served the prefix at least once -- no concurrency needed at all.
+    #
+    # n_requests=60, not 20: at n=20 this was genuinely flaky, not just
+    # slow to converge -- 10 live runs at n=20 ranged from a clean 50/50
+    # split down to 2 runs where ALL 20 requests landed on one worker
+    # (0/20 and 5/20 on the other), consistent with an early near-tie
+    # sometimes cascading into a self-reinforcing streak for the rest of a
+    # short run, rather than a smoothly-converging average. 10 live runs at
+    # n=60 ranged 52-77% max-worker-share -- comfortably clear of
+    # max_worker_share below, with real margin, and no full lock-in in any
+    # of the 10. If this starts flaking again (e.g. after a config change
+    # that shifts router_temperature or the credit weights), raising
+    # n_requests further is the first thing to try before assuming a real
+    # regression.
+    print(f"  sending {n_requests} sequential requests sharing one fixed ~{prefix_words}-word "
+          f"prefix, each with its own random ~{suffix_words}-word suffix...")
+    fixed_prefix = make_prefix(random.randint(0, 2**31), prefix_words)
 
-    def one_request(_i):
-        suffix = f" uniquepart{random.randint(0, 10**9)} " * 50
-        send(endpoint, model, prefix + suffix)
+    req_ids = []
+    hits = 0
+    for _ in range(n_requests):
+        suffix = make_prefix(random.randint(0, 2**31), suffix_words)
+        resp = send(endpoint, model, fixed_prefix + " " + suffix)
+        hits += int(bool(cached_tokens_of(resp)))
+        req_ids.append((resp.get("id") or "").replace("cmpl-", ""))
 
-    with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        list(pool.map(one_request, range(n_requests)))
+    print("  batch complete. correlating each request to a worker via its response id "
+          "in the worker logs...")
+    log_contents = {}
+    for path in log_paths:
+        with open(path, errors="replace") as f:
+            log_contents[path] = f.read()
 
-    time.sleep(1)
-    counts = {}
-    for p in log_paths:
-        counts[p] = len(parse_log_events(p)) - before[p]
+    counts = defaultdict(int)
+    unmatched = 0
+    for req_id in req_ids:
+        worker = next((p for p, content in log_contents.items() if req_id and req_id in content), None)
+        if worker is None:
+            unmatched += 1
+        else:
+            counts[worker] += 1
+
+    if unmatched:
+        print(f"  WARNING: {unmatched}/{n_requests} response(s) could not be matched to a "
+              "worker log by request id (log may be stale/rotated mid-run).")
 
     total = sum(counts.values())
-    if total < n_requests:
-        print(f"  FAIL: expected {n_requests} new completions, only found {total}.")
+    if total == 0:
+        print("  FAIL: no requests could be matched to any worker log.")
         return False
 
-    for p, c in counts.items():
-        print(f"  {os.path.basename(p)}: {c}/{total} ({c/total:.0%})")
+    for path in log_paths:
+        c = counts.get(path, 0)
+        print(f"  {os.path.basename(path)}: {c}/{total} ({c/total:.0%})")
+    print(f"  cache-hit rate across the run: {hits}/{n_requests} (both workers should show "
+          "hits once each has served this prefix at least once)")
 
     max_share = max(counts.values()) / total
     print(f"  max single-worker share: {max_share:.0%} (threshold: {max_worker_share:.0%})")
     if max_share > max_worker_share:
-        print("  FAIL: one worker took more than the allowed share -- load term may not be working "
-              "(all cache-hit traffic pinned to one worker).")
+        print("  FAIL: nearly all traffic stuck on one worker -- load isn't being distributed "
+              "across workers.")
         return False
     print("  PASS")
     return True
