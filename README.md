@@ -45,6 +45,7 @@ All external dependencies are pinned to exact commit SHAs in `config/versions.en
 | `bench/run.sh` | Run one benchmark config |
 | `bench/sweep.sh` | Run the standard 9-config benchmark sweep |
 | `test/e2e_rdu_decode.sh` | End-to-end smoke test of the RDU decode image |
+| `test/e2e_kv_routing.py` | E2E test proving KV-cache-aware + load-aware prefill routing is actually active (not just configured) against a live stack |
 
 ---
 
