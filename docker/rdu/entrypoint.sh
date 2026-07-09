@@ -85,8 +85,9 @@ RDU_CONFIG="$MODEL_CONFIG"
 # ModelType.Chat/Completions -- i.e. this decode worker's card -- and uses that same
 # block size to validate every KV-cache-block event GPU prefill publishes (see
 # convert.rs's equality-drop guard). RDUPlatform (rdu_hardware/platform.py) force-
-# overrides vllm_config.cache_config.block_size to 256 to match the RDU's real,
-# hardware-mandated 64 KiB physical paging chunk -- that value is correct and must not
+# overrides vllm_config.cache_config.block_size to 256 tokens/block, matching the
+# RDU's real, hardware-mandated 64 KiB physical paging chunk (256 tokens is what
+# fits in one such chunk for this model) -- that value is correct and must not
 # change. But Dynamo's own dynamo_kv_event_block_size additional_config key lets us
 # report a *different* value to Dynamo's discovery/routing layer without touching
 # cache_config.block_size at all (components/src/dynamo/vllm/cache_info.py's
