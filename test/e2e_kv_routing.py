@@ -7,8 +7,7 @@ configured.
 Assumes control-plane + >=2 co-located GPU prefill workers + decode are
 ALREADY running (see launch/control_plane.sh, launch/gpu_prefill.sh,
 launch/rdu_decode.sh) -- same convention as test/e2e_rdu_decode.sh. Sends
-real requests against the live endpoint and reads each prefill worker's own
-log to determine which worker actually handled each request.
+real requests against the live endpoint.
 
 Usage:
   python3 test/e2e_kv_routing.py
@@ -16,18 +15,19 @@ Usage:
   python3 test/e2e_kv_routing.py --endpoint http://otherhost:18000 --model MiniMax-M2.7
 
 Two checks:
-  1. Cache-affinity: N independent trials, each sending a FRESH
-     never-before-seen prefix once (cold) then immediately repeating it
-     once, checking whether the repeat lands on the same worker as the cold
-     request. Plain round-robin assigns purely by arrival position, so for
-     this cold-then-repeat pairing it is fully deterministic: cold always
-     lands at an odd position, repeat always at the next even position --
-     different workers, every single trial. Round-robin's stickiness rate
-     for this design is therefore exactly 0%, always -- no aliasing
-     ambiguity. Real cache-aware routing should show a sticky rate well
-     above that floor (though not necessarily 100%, since
-     --router-temperature intentionally adds sampling noise so it doesn't
-     hard-pin traffic).
+  1. Cache-affinity: sends N unique prompts (cold), waits for the entire
+     batch to finish, shuffles the order, then resends all N as repeats --
+     reading the cache-hit signal straight from each repeat's own API
+     response (usage.prompt_tokens_details.cached_tokens, sourced from
+     vLLM's own request_output.num_cached_tokens -- see send()'s docstring
+     for how this was confirmed to actually work in this deployment). The
+     right null hypothesis is RANDOM choice among the N_WORKERS prefill
+     workers, not round-robin: if the router ignored cache state and picked
+     a worker uniformly at random for each repeat, it would land on the
+     cache-holding worker ~1/N_WORKERS of the time by chance alone -- so a
+     raw hit rate above 0% proves nothing; only a rate significantly above
+     1/N_WORKERS does. Runs a one-sided exact binomial test against that
+     baseline rather than an arbitrary percentage cutoff.
   2. Load-balance: sends N requests at concurrency>1 sharing one prefix,
      checks traffic isn't pinned onto a single worker despite established
      cache affinity (that would indicate the load term isn't working).
@@ -90,11 +90,48 @@ def make_prefix(seed, n_words):
 
 
 def send(endpoint, model, prompt, max_tokens=5):
+    """Returns the parsed JSON response (not just fire-and-forget) -- Dynamo's
+    vLLM handler (components/src/dynamo/vllm/handlers.py) puts a real,
+    ground-truth cache-hit signal in the response itself:
+    usage.prompt_tokens_details.cached_tokens, sourced directly from vLLM's
+    own request_output.num_cached_tokens. Confirmed live: a short (11-token)
+    repeat showed no such field (block_size=64 means anything under one
+    block can never register a hit, so absence there is expected, not
+    evidence the mechanism is broken), but a 600-token prompt repeated
+    showed cached_tokens=576. Also confirmed from source
+    (dynamo/vllm/handlers.py) that the field is only included when
+    truthy -- Python's `if 0:` is False, so a genuine miss (0 cached
+    tokens) and an unsupported/absent attribute are indistinguishable by
+    absence alone. Use long-enough prompts (multiple blocks) and don't
+    read anything into absence beyond "not a clear hit."
+    """
     body = {"model": model, "prompt": prompt, "max_tokens": max_tokens, "temperature": 0}
     req = urllib.request.Request(endpoint, data=json.dumps(body).encode(),
                                   headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=120) as resp:
-        resp.read()
+        return json.loads(resp.read())
+
+
+def cached_tokens_of(response):
+    details = response.get("usage", {}).get("prompt_tokens_details") or {}
+    return details.get("cached_tokens") or 0
+
+
+def _comb(n, k):
+    """n-choose-k, no math.comb dependency (needs Python 3.8+; this repo's
+    login-node default `python3` is 3.6)."""
+    if k < 0 or k > n:
+        return 0
+    k = min(k, n - k)
+    result = 1
+    for i in range(k):
+        result = result * (n - i) // (i + 1)
+    return result
+
+
+def binomial_sf(n, k, p):
+    """P(X >= k) for X ~ Binomial(n, p), computed exactly (no scipy dependency)."""
+    return sum(_comb(n, i) * (p ** i) * ((1 - p) ** (n - i)) for i in range(k, n + 1))
 
 
 def parse_log_events(log_path):
@@ -118,68 +155,71 @@ def parse_log_events(log_path):
     return events
 
 
-def check_cache_affinity(endpoint, model, log_paths, n_trials=10, min_sticky_rate=0.3):
-    print("\n=== Check 1: cache-affinity (many independent cold+repeat trials) ===")
-    # Design: N independent trials, each with a FRESH never-before-seen
-    # prefix sent once (cold) then immediately repeated once. Checks whether
-    # the repeat lands on the same worker as the cold request.
+def check_cache_affinity(endpoint, model, n_workers, n_prompts=20, prompt_words=2650,
+                          alpha=0.05):
+    print("\n=== Check 1: cache-affinity (batch cold, then shuffled repeat batch) ===")
+    # Design: send N unique prompts (cold) fully SEQUENTIALLY, wait for the
+    # entire batch to finish, shuffle the order, then resend all N as
+    # repeats -- also fully sequentially. Read cached_tokens straight from
+    # each repeat's own API response (see send()/cached_tokens_of()).
     #
-    # Why this shape and not "repeat the same prefix K times in a row"
-    # (tried first, see git history): repeating in a row creates CORRELATED
-    # samples -- if an early repeat happens to miss (temperature-driven
-    # sampling, not a bug -- confirmed live by inspecting prefill_elapsed_ms:
-    # a genuine cold miss on the "wrong" worker), that miss warms the wrong
-    # worker too, and every subsequent repeat in that same run can then keep
-    # landing there "by chance" since both workers are now equally cached.
-    # One bad early sample dominates the whole trial. Fresh-prefix-per-trial
-    # avoids this entirely -- every trial is independent.
+    # Both phases are sequential, not concurrent, on purpose: an earlier
+    # version sent the repeat phase 8-at-a-time and measured a hit rate
+    # BELOW the random-chance baseline, which has no plausible explanation
+    # as a routing bug (a broken router would look random, not
+    # anti-correlated) but is exactly what self-induced load competition
+    # would produce -- with several *other* repeats concurrently in flight,
+    # the "correct" (cache-holding) worker's load term can legitimately
+    # spike at the exact moment a given repeat is routed, causing the
+    # router to correctly route AWAY from it for load reasons. That's this
+    # check accidentally exercising the load-balance mechanism (tested
+    # separately, on purpose, in check_load_balance) at the same time it's
+    # trying to isolate cache-affinity alone. Sequential sending removes
+    # that confound entirely -- only one request is ever in flight, so
+    # there's no artificial load signal from this test's own traffic.
     #
-    # Why this is also unambiguous against a round-robin regression (unlike
-    # the ABAB design tried first): each trial is exactly 2 requests, cold
-    # then repeat. Plain round-robin assigns purely by arrival position --
-    # cold always lands at an odd position (-> worker0), repeat always at
-    # the next even position (-> worker1), for EVERY trial, deterministically.
-    # So round-robin's stickiness rate for this design is exactly 0%, always
-    # -- there's no aliasing risk like the ABAB design had. Any real
-    # stickiness above a small noise floor is a genuine signal.
-    sticky = 0
-    trials_completed = 0
-    for i in range(n_trials):
-        prefix = make_prefix(random.randint(0, 2**31), 13000)
-        before = {p: len(parse_log_events(p)) for p in log_paths}
-        for _ in range(2):  # cold, then immediate repeat
-            suffix = f" uniquepart{random.randint(0, 10**9)} " * 50
-            send(endpoint, model, prefix + suffix)
-        time.sleep(0.3)
+    # The right null hypothesis is RANDOM choice among n_workers, not
+    # round-robin: if the router ignored cache state and picked a worker
+    # uniformly at random for the repeat, it would land on the cache-holding
+    # worker ~1/n_workers of the time by chance alone. A raw hit rate above
+    # 0% proves nothing; only a rate meaningfully above 1/n_workers does.
+    # Using an exact one-sided binomial test against that baseline rather
+    # than an arbitrary percentage threshold, since the raw threshold would
+    # itself need justifying -- the binomial test says exactly how
+    # surprising the observed count would be under pure random chance,
+    # which is the actual question.
+    prompts = [make_prefix(random.randint(0, 2**31), prompt_words) for _ in range(n_prompts)]
 
-        new_events = []
-        for p in log_paths:
-            all_events = parse_log_events(p)
-            for e in all_events[before[p]:]:
-                new_events.append((p, *e))
-        new_events.sort(key=lambda e: e[1])
-        if len(new_events) < 2:
-            print(f"  trial {i+1}: WARNING only found {len(new_events)}/2 request events, skipping")
-            continue
-        cold_worker, repeat_worker = new_events[-2][0], new_events[-1][0]
-        trials_completed += 1
-        is_sticky = cold_worker == repeat_worker
-        sticky += int(is_sticky)
-        print(f"  trial {i+1}: cold->{os.path.basename(cold_worker)}, "
-              f"repeat->{os.path.basename(repeat_worker)} {'(sticky)' if is_sticky else '(exception)'}")
+    print(f"  sending {n_prompts} unique cold prompts, sequentially...")
+    cold_responses = [send(endpoint, model, p) for p in prompts]
+    cold_tokens = [r.get("usage", {}).get("prompt_tokens", 0) for r in cold_responses]
 
-    if trials_completed == 0:
-        print("  FAIL: no trials completed -- could not observe any requests in the worker logs.")
-        return False
+    order = list(range(n_prompts))
+    random.shuffle(order)
+    print(f"  batch complete. Resending all {n_prompts} in shuffled order as repeats, "
+          f"sequentially...")
+    repeat_responses = [send(endpoint, model, prompts[i]) for i in order]
 
-    rate = sticky / trials_completed
-    print(f"  sticky rate: {sticky}/{trials_completed} ({rate:.0%}); "
-          f"round-robin's deterministic baseline for this design is 0%")
+    hits = 0
+    for i, resp in zip(order, repeat_responses):
+        cached = cached_tokens_of(resp)
+        # require the hit to cover a real majority of the prompt, not a
+        # tiny/spurious overlap -- vLLM's own block-level caching means a
+        # genuine same-worker repeat should cover nearly the whole prompt
+        # (minus one trailing partial block), not a token or two.
+        is_hit = cached > 0.5 * cold_tokens[i]
+        hits += int(is_hit)
 
-    if rate < min_sticky_rate:
-        print(f"  FAIL: sticky rate {rate:.0%} is below the {min_sticky_rate:.0%} threshold -- "
-              "routing doesn't show meaningful cache preference (could be round-robin, could be "
-              "load/temperature fully dominating cache credit).")
+    baseline = 1 / n_workers
+    print(f"  hits: {hits}/{n_prompts} ({hits/n_prompts:.0%}); random-choice baseline for "
+          f"{n_workers} workers is {baseline:.0%}; perfect stickiness would be 100%")
+
+    p_value = binomial_sf(n_prompts, hits, baseline)
+    print(f"  one-sided binomial test vs. random chance: p={p_value:.4f} (need < {alpha})")
+
+    if p_value >= alpha:
+        print(f"  FAIL: hit rate is not significantly above the {baseline:.0%} random-chance "
+              "baseline -- routing doesn't show meaningful cache preference.")
         return False
     print("  PASS")
     return True
@@ -247,7 +287,7 @@ def main():
         print(f"FAIL: endpoint not reachable: {e}")
         sys.exit(2)
 
-    ok1 = check_cache_affinity(endpoint, model, log_paths)
+    ok1 = check_cache_affinity(endpoint, model, args.n_workers)
     ok2 = check_load_balance(endpoint, model, log_paths)
 
     print("\n=== Summary ===")
