@@ -32,6 +32,15 @@ if [[ "${1:-}" == "--inner" ]]; then
     # the same fixed port (GPU_NIXL_BASE_PORT) when data_parallel_index=0, which
     # collides if two workers share a node under --net=host.
     NIXL_PORT=$((GPU_NIXL_BASE_PORT + IDX))
+    # Same collision pattern for the KV-events ZMQ publisher (feeds
+    # --router-mode kv's cache-aware routing on the frontend): vLLM's
+    # KVEventsConfig defaults its publisher to a single hardcoded
+    # tcp://*:5557 -- two same-node workers under --net=host both try to
+    # bind it and the second one's engine core dies with
+    # zmq.error.ZMQError: Address already in use. Give each worker its own
+    # port, same fix shape as NIXL_PORT.
+    KV_EVENTS_PORT=$((GPU_KV_EVENTS_BASE_PORT + IDX))
+    KV_EVENTS_CONFIG="{\"enable_kv_cache_events\": true, \"endpoint\": \"tcp://*:${KV_EVENTS_PORT}\"}"
 
     echo "=== GPU prefill worker $IDX (Docker) on $(hostname) ==="
     echo "    image:      $GPU_IMAGE"
@@ -45,17 +54,17 @@ if [[ "${1:-}" == "--inner" ]]; then
     done
     # Background GPU telemetry sampler — a plain child process of this SAME
     # SLURM step (not a new srun/step), so it never touches --overlap's
-    # broken step-creation path on this cluster (see
-    # docs/local/GPU_PREFILL_PARITY_INVESTIGATION.md). exec below only
+    # broken step-creation path on this cluster (srun --overlap hangs
+    # indefinitely on jobs we own, and is denied outright for jobs we don't
+    # -- confirmed empirically, not fixable from this repo). exec below only
     # replaces this process's own image; already-forked background children
     # are unaffected and keep running until the job's cgroup is torn down.
     SMI_LOG="$LOG_DIR/gpu_telemetry_${IDX}_job${SLURM_JOB_ID}.csv"
     # GPU_TELEMETRY_FULL=1 captures nvidia-smi's throttle-reason bitmask fields
     # (hw/sw thermal slowdown, power cap, etc.) plus fan/PCIe/memory-temp/clock
     # detail, for directly distinguishing WHY the driver is throttling rather
-    # than just observing temp+clock correlate (see
-    # docs/local/GPU_PREFILL_PARITY_INVESTIGATION.md's causality follow-up).
-    # Default stays the lean 6-field query to avoid bloating routine runs.
+    # than just observing temp+clock correlate. Default stays the lean
+    # 6-field query to avoid bloating routine runs.
     if [[ "${GPU_TELEMETRY_FULL:-0}" == "1" ]]; then
         SMI_FIELDS="timestamp,index,utilization.gpu,utilization.memory,power.draw,power.limit,enforced.power.limit,clocks.current.sm,clocks.current.memory,clocks.max.sm,temperature.gpu,temperature.gpu.tlimit,temperature.memory,fan.speed,pcie.link.gen.current,pcie.link.width.current,clocks_throttle_reasons.active,clocks_throttle_reasons.hw_slowdown,clocks_throttle_reasons.hw_thermal_slowdown,clocks_throttle_reasons.sw_thermal_slowdown,clocks_throttle_reasons.sw_power_cap,clocks_throttle_reasons.hw_power_brake_slowdown,clocks_throttle_reasons.sync_boost,clocks_throttle_reasons.gpu_idle"
     else
@@ -67,12 +76,14 @@ if [[ "${1:-}" == "--inner" ]]; then
     echo "    GPU telemetry: $SMI_LOG (full=${GPU_TELEMETRY_FULL:-0})"
 
     # Optional explicit physical-GPU-combo override, for testing arbitrary (not
-    # just contiguous) GPU sets with a single TP-N worker -- e.g. GPU_EXPLICIT_DEVICES=1,4,5,7
-    # to mix a known-hot unit into an otherwise-cool set, or vice versa (see
-    # docs/local/GPU_PREFILL_PARITY_INVESTIGATION.md). Requires requesting the
-    # WHOLE node (GPU_GRES=gpu:8) so every physical device is in this job's
-    # cgroup device whitelist -- cuda-docker-run-wrapper does nothing but
-    # forward whatever $CUDA_VISIBLE_DEVICES already is as -e NVIDIA_VISIBLE_DEVICES
+    # just contiguous) GPU sets with a single TP-N worker -- e.g.
+    # GPU_EXPLICIT_DEVICES=1,4,5,7 to mix a specific GPU into an otherwise
+    # different set (e.g. isolating whether a single misbehaving GPU
+    # dominates a group's performance regardless of which others it's
+    # grouped with). Requires requesting the WHOLE node (GPU_GRES=gpu:8) so
+    # every physical device is in this job's cgroup device whitelist --
+    # cuda-docker-run-wrapper does nothing but forward whatever
+    # $CUDA_VISIBLE_DEVICES already is as -e NVIDIA_VISIBLE_DEVICES
     # (confirmed by reading /usr/bin/cuda-docker-run-wrapper directly), so
     # overriding the env var here, before exec, is sufficient -- no wrapper
     # changes needed. Only meaningful with exactly one worker per node.
@@ -81,16 +92,17 @@ if [[ "${1:-}" == "--inner" ]]; then
         export CUDA_VISIBLE_DEVICES="$GPU_EXPLICIT_DEVICES"
     fi
 
-    # Optional CPU/memory NUMA-affinity override for the TTFT-growth causal
-    # test (docs/local/GPU_PREFILL_PARITY_INVESTIGATION.md) -- SUPERSEDED: the
-    # NUMA hypothesis was ruled out (root cause is single-GPU thermal
-    # throttling, not NUMA affinity), kept only because the mechanism itself
-    # (deliberately mismatching CPU-NUMA from GPU-NUMA) is reusable for future
-    # causal tests. SLURM assigns physical GPUs per-launch (not fixed per
-    # worker index -- this bit us twice already, see doc), so the override is
-    # computed from the ACTUAL $CUDA_VISIBLE_DEVICES this job got, not from a
-    # static worker-index table. sc3-c129 topology: GPUs{0,1}->NUMA0,
-    # {2,3}->NUMA1, {4,5}->NUMA2, {6,7}->NUMA3.
+    # Optional CPU/memory NUMA-affinity override, originally added to test
+    # NUMA affinity as a cause of a per-request-compute-time growth issue --
+    # SUPERSEDED: that hypothesis was ruled out (root cause turned out to be
+    # a single GPU per node thermally throttling under sustained load, not
+    # NUMA affinity), kept only because the override mechanism itself
+    # (deliberately mismatching CPU-NUMA from GPU-NUMA) is reusable for
+    # future causal tests. SLURM assigns physical GPUs per-launch (not fixed
+    # per worker index), so the override is computed from the ACTUAL
+    # $CUDA_VISIBLE_DEVICES this job got, not from a static worker-index
+    # table. sc3-c129 topology: GPUs{0,1}->NUMA0, {2,3}->NUMA1,
+    # {4,5}->NUMA2, {6,7}->NUMA3.
     NUMACTL_PREFIX=()
     if [[ "${GPU_NUMA_SWAP_TEST:-0}" == "1" ]]; then
         FIRST_GPU="${CUDA_VISIBLE_DEVICES%%,*}"
@@ -142,7 +154,8 @@ if [[ "${1:-}" == "--inner" ]]; then
             --enable-prefix-caching \
             --reasoning-parser minimax_m2_append_think \
             --trust-remote-code \
-            --kv-transfer-config "$KV_CONFIG"
+            --kv-transfer-config "$KV_CONFIG" \
+            --kv-events-config "$KV_EVENTS_CONFIG"
 fi
 
 # ── Outer: submit one SLURM job per configured worker, wait for all to register ──
@@ -177,11 +190,11 @@ echo "  srun PIDs: ${SRUN_PIDS[*]}"
 
 # Fail-fast teardown. scancel-by-job-name is the primary mechanism (targets
 # exactly this launch's jobs, not scancel-everything-for-the-user); killing
-# the local srun client PID is a best-effort fallback on top. Per
-# docs/local/XPYD_SCALING_DESIGN.md §5.1, scancel has NOT reliably stopped a
-# worker's foreground Docker container in this repo before -- this needs
-# empirical confirmation (check `docker ps`/`nvidia-smi` on the node after a
-# real teardown), and may need a container-level kill mechanism added if it
+# the local srun client PID is a best-effort fallback on top. scancel has
+# NOT always reliably stopped a worker's foreground Docker container in
+# this repo's history -- this needs empirical confirmation on any given
+# cluster (check `docker ps`/`nvidia-smi` on the node after a real
+# teardown), and may need a container-level kill mechanism added if it
 # doesn't hold up.
 teardown_all() {
     echo "  Tearing down all worker(s) from this launch..."

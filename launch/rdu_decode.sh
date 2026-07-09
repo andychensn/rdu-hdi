@@ -39,6 +39,7 @@ if [[ "${1:-}" == "--inner" ]]; then
         -e MAX_MODEL_LEN="$MAX_MODEL_LEN" \
         -e PEF="$PEF" \
         -e MODEL_CONFIG="$MODEL_CONFIG" \
+        -e GPU_PREFILL_BLOCK_SIZE="$BLOCK_SIZE" \
         -e VLLM_RDU_PLUGIN_TIME_PROFILE=1 \
         "$RDU_IMAGE"
 fi

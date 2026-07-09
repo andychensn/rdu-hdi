@@ -9,6 +9,7 @@ set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 source "$REPO_ROOT/config/cluster.env"
+source "$REPO_ROOT/config/model.env"
 
 if [[ "${1:-}" == "--stop" ]]; then
     sudo -g docker /usr/bin/docker-wrapper exec rdu-hdi-control-plane sh -c 'kill -TERM 1'
@@ -22,4 +23,5 @@ exec sudo -g docker /usr/bin/docker-run-wrapper --pull=always --net=host --rm \
     --name rdu-hdi-control-plane \
     -e CONTROL_PLANE_IP="$CONTROL_PLANE_IP" -e ETCD_PORT="$ETCD_PORT" \
     -e NATS_PORT="$NATS_PORT" -e VLLM_PORT="$VLLM_PORT" \
+    -e BLOCK_SIZE="$BLOCK_SIZE" \
     "$CONTROL_PLANE_IMAGE"
