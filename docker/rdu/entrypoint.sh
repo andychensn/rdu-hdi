@@ -80,6 +80,26 @@ RDU_CONFIG="$MODEL_CONFIG"
 }
 [ -n "$RDU_CONFIG" ] && echo "  rdu_config: $RDU_CONFIG (fast-coe schema, used as-is)"
 
+# Dynamo KV-router block-size fix (see docs/local/KV_ROUTER_BLOCK_SIZE_FIX_PLAN.md §3.0):
+# Dynamo's PrefillRouter is built from whichever model card it happens to see with
+# ModelType.Chat/Completions -- i.e. this decode worker's card -- and uses that same
+# block size to validate every KV-cache-block event GPU prefill publishes (see
+# convert.rs's equality-drop guard). RDUPlatform (rdu_hardware/platform.py) force-
+# overrides vllm_config.cache_config.block_size to 256 to match the RDU's real,
+# hardware-mandated 64 KiB physical paging chunk -- that value is correct and must not
+# change. But Dynamo's own dynamo_kv_event_block_size additional_config key lets us
+# report a *different* value to Dynamo's discovery/routing layer without touching
+# cache_config.block_size at all (components/src/dynamo/vllm/cache_info.py's
+# get_configured_kv_event_block_size() reads this key before falling back to
+# cache_config.block_size). Safe here specifically because this worker runs with
+# --no-enable-prefix-caching below, so it never constructs a KV event publisher and has
+# no real KV-event stream of its own to mislabel -- the only consumer of this value in
+# our topology is the one-time model-card registration that feeds PrefillRouter::new.
+ADDITIONAL_CONFIG_JSON="{\"dynamo_kv_event_block_size\": ${GPU_PREFILL_BLOCK_SIZE:?GPU_PREFILL_BLOCK_SIZE must be set (GPU prefill's real --block-size, so decode reports the same value prefill's KV events are actually chunked at)}"
+[ -n "$RDU_CONFIG" ] && ADDITIONAL_CONFIG_JSON="${ADDITIONAL_CONFIG_JSON}, \"rdu_config\": \"$RDU_CONFIG\""
+ADDITIONAL_CONFIG_JSON="${ADDITIONAL_CONFIG_JSON}}"
+echo "  additional-config: $ADDITIONAL_CONFIG_JSON"
+
 # UCX_RCACHE_MAX_UNRELEASED=1024 below looks redundant with vllm's own
 # nixl_connector.py, which auto-sets it to "1024" if unset -- but only if
 # nixl hasn't been imported yet when that code runs. GPU prefill (which
@@ -146,6 +166,6 @@ exec env \
         --max-model-len "$MAX_MODEL_LEN" \
         --reasoning-parser minimax_m2_append_think \
         --compilation-config '{"mode": 0}' \
-        ${RDU_CONFIG:+--additional-config "{\"rdu_config\": \"$RDU_CONFIG\"}"} \
+        --additional-config "$ADDITIONAL_CONFIG_JSON" \
         --trust-remote-code \
         --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_buffer_device":"rdu","kv_connector_extra_config":{"rdu_mode":"real","rdu_ddr_cache_budget_gb":30,"backends":["UCX"],"enforce_handshake_compat":false}}'
