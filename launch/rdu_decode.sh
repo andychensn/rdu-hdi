@@ -25,7 +25,7 @@ if [[ "${1:-}" == "--inner" ]]; then
 
     echo "=== starting persistent RDU decode container (self-built, fully baked-in) on $(hostname) $(date) ==="
     exec sudo -g docker /usr/bin/docker-run-wrapper --pull=always --net=host --rm \
-        --name rdu-decode \
+        --name "rdu-decode-${SLURM_JOB_ID}" \
         --device /dev/rdu --device /dev/rdu_mem_map \
         $RDMA_DEVICES \
         --ulimit memlock=-1 \
