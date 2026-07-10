@@ -15,6 +15,18 @@ Usage:
       --events events.json \\
       --start 1783486038.86 --end 1783486398.19 \\
       -o timeline.png --title "100k/1k conc=1, 20 requests"
+
+Any number of --smi/--gpus worker pairs is supported (not just 2) -- each
+worker's telemetry and physical-GPU-index mapping is independent, so this
+works the same whether all workers share one node or are spread across
+several (each worker's --gpus indices are local to its own --smi CSV, not a
+shared/global GPU index space).
+
+--metrics controls which telemetry panel(s) render below the Gantt chart,
+comma-separated from {util,power,clock,temp} -- default is just "util" (one
+line per worker, averaged across that worker's own GPUs) to keep the chart
+readable at higher worker counts; pass e.g. --metrics util,power,clock,temp
+to get the original full 4-panel telemetry stack back.
 """
 import argparse
 import re
@@ -101,9 +113,25 @@ def main():
         default=7.0,
         help="hours to ADD to nvidia-smi's local timestamp to get UTC (default 7 = PDT)",
     )
+    ap.add_argument(
+        "--metrics",
+        default="util",
+        help="comma-separated telemetry panels to render, from {util,power,clock,temp} "
+             "(default: util only, one averaged-per-worker line each -- pass e.g. "
+             "util,power,clock,temp for the full original 4-panel stack)",
+    )
     ap.add_argument("-o", "--output", required=True)
     ap.add_argument("--title", default="")
     args = ap.parse_args()
+
+    ALL_METRICS = {"util": (1, "GPU Utilization (%)", (0, 108)),
+                    "power": (2, "Power (W)", None),
+                    "clock": (3, "SM Clock (MHz)", None),
+                    "temp": (4, "Temperature (C)", None)}
+    requested_metrics = [m.strip() for m in args.metrics.split(",") if m.strip()]
+    unknown = set(requested_metrics) - set(ALL_METRICS)
+    if unknown:
+        sys.exit(f"--metrics: unknown metric(s) {sorted(unknown)}, choose from {sorted(ALL_METRICS)}")
 
     gpu_map = {}
     for spec in args.gpus:
@@ -157,16 +185,19 @@ def main():
 
     gantt_rows.sort(key=lambda r: r[0])
     n_rows = len(gantt_rows)
+    n_telemetry = len(requested_metrics)
 
     ROW_IN = 0.26          # inches per request row
     TELEMETRY_IN = 2.6     # inches per telemetry panel
     gantt_in = max(2.0, n_rows * ROW_IN + 0.8)
-    fig_h = gantt_in + 4 * TELEMETRY_IN
+    fig_h = gantt_in + n_telemetry * TELEMETRY_IN
 
     fig, axes = plt.subplots(
-        5, 1, figsize=(18, fig_h), sharex=True,
-        gridspec_kw={"hspace": 0.15, "height_ratios": [gantt_in, TELEMETRY_IN, TELEMETRY_IN, TELEMETRY_IN, TELEMETRY_IN]},
+        1 + n_telemetry, 1, figsize=(18, fig_h), sharex=True,
+        gridspec_kw={"hspace": 0.15, "height_ratios": [gantt_in] + [TELEMETRY_IN] * n_telemetry},
     )
+    if n_telemetry == 0:
+        axes = [axes]  # plt.subplots returns a bare Axes, not an array, for a single row
     fig.suptitle(
         f"Per-request phase timeline + GPU telemetry{(' — ' + args.title) if args.title else ''}",
         fontsize=12,
@@ -209,14 +240,9 @@ def main():
         )
     gantt_ax.legend(handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.85)
 
-    panels = [
-        (1, "GPU Utilization (%)", (0, 108)),
-        (2, "Power (W)", None),
-        (3, "SM Clock (MHz)", None),
-        (4, "Temperature (C)", None),
-    ]
+    panels = [ALL_METRICS[m] for m in requested_metrics]
 
-    for ax, (field_idx, ylabel, ylim) in zip(axes[1:], panels):
+    for i, (ax, (field_idx, ylabel, ylim)) in enumerate(zip(axes[1:], panels)):
         for label, rows in smi_map.items():
             ts, vals = group_series(rows, gpu_map[label], field_idx)
             t_rel = [t - args.start for t in ts]
@@ -227,10 +253,12 @@ def main():
         ax.grid(axis="y", linestyle=":", linewidth=0.5, alpha=0.5)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+        if i == 0:
+            # Worker->color key lives here (once) rather than on every panel --
+            # the Gantt legend above explains phases, not which color is which
+            # worker.
+            ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
 
-    util_ax = axes[1]
-
-    util_ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
     axes[-1].set_xlabel("Time (seconds from benchmark start)", fontsize=10)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(args.output, dpi=150, bbox_inches="tight")
