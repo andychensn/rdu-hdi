@@ -53,12 +53,16 @@ def strip_unit(s):
     return float(v) if v not in ("", "-") else None
 
 
-def parse_smi_csv(path, tz_offset_hours, start=None, end=None, pad_seconds=10.0):
+def parse_smi_csv(path, tz_offset_hours, start=None, end=None, pad_seconds=3.0):
     """nvidia-smi -lms output: timestamp,index,util,power,clock,temp (local node time).
 
     These CSVs accumulate for the worker's entire job lifetime (often much
     longer than any single benchmark run) -- filter to [start-pad, end+pad]
     so a short benchmark isn't squeezed into a sliver of a much wider axis.
+    Keep this small (a few seconds) and rely on the explicit set_xlim() in
+    main() for the actual displayed window -- a large pad here plus
+    matplotlib's default autoscaling is what used to leave large empty
+    margins on both sides of a short, tightly-windowed benchmark.
     """
     rows = defaultdict(list)  # gpu_index -> [(unix_ts_utc, util, power, clock, temp), ...]
     with open(path, errors="replace") as f:
@@ -120,6 +124,17 @@ def main():
              "(default: util only, one averaged-per-worker line each -- pass e.g. "
              "util,power,clock,temp for the full original 4-panel stack)",
     )
+    ap.add_argument(
+        "--pad-seconds",
+        type=float,
+        default=3.0,
+        help="seconds of context to show before --start and after --end (default 3.0). "
+             "The displayed window is always exactly [start-pad, end+pad], regardless of "
+             "how far the underlying telemetry CSV data actually extends -- pass --start/"
+             "--end tightly around the real request activity (e.g. min t_received / max "
+             "t_completed_decode from the events JSON) for a tight chart with minimal "
+             "empty margin.",
+    )
     ap.add_argument("-o", "--output", required=True)
     ap.add_argument("--title", default="")
     args = ap.parse_args()
@@ -141,7 +156,8 @@ def main():
     smi_map = {}
     for spec in args.smi:
         label, path = spec.split("=", 1)
-        smi_map[label] = parse_smi_csv(path, args.tz_offset_hours, args.start, args.end)
+        smi_map[label] = parse_smi_csv(path, args.tz_offset_hours, args.start, args.end,
+                                        pad_seconds=args.pad_seconds)
 
     events = json.load(open(args.events))
 
@@ -220,9 +236,15 @@ def main():
     gantt_ax.set_yticks([])
     gantt_ax.set_ylim(-1, n_rows)
     gantt_ax.invert_yaxis()  # earliest-arriving request at the top
-    # NOTE: x-axis is shared across all 5 panels -- don't call set_xlim here,
-    # it would also clip the telemetry panels below. annotation_clip=False on
-    # the end-of-row labels above lets them draw past the data range instead.
+    # x-axis is shared across all panels (sharex=True), so this one set_xlim
+    # call tightly bounds all of them to [start-pad, end+pad] regardless of
+    # how far the underlying telemetry CSVs actually extend -- previously the
+    # only bound came from parse_smi_csv's own filtering pad plus matplotlib's
+    # default autoscaling, which left large empty margins for a short,
+    # tightly-windowed benchmark. annotation_clip=False on the end-of-row
+    # labels above still lets them draw past this limit rather than being cut
+    # off, so a request ending right at the edge doesn't lose its label.
+    gantt_ax.set_xlim(-args.pad_seconds, (args.end - args.start) + args.pad_seconds)
     gantt_ax.set_ylabel(f"Requests ({n_rows}), by arrival", fontsize=9)
     gantt_ax.grid(axis="x", linestyle=":", linewidth=0.5, alpha=0.5)
     gantt_ax.spines["top"].set_visible(False)
