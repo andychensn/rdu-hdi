@@ -55,6 +55,36 @@ if [[ "${1:-}" == "--inner" ]]; then
     # can't drift out of sync if BLOCK_SIZE ever changes.
     LMCACHE_CHUNK_SIZE=$((BLOCK_SIZE * 4))
 
+    # Optional: shrink vLLM's own native GPU KV cache for this worker.
+    # Not used in normal operation (the whole point of a large GPU cache is
+    # to serve as much as possible without ever needing LMCache's CPU
+    # tier) -- exists so test/e2e_lmcache_correctness.py can force reliable
+    # eviction. Without this, that test's filler traffic competes against
+    # this deployment's real ~98K-token-per-worker native capacity, and
+    # empirically almost never wins -- vLLM's own cache silently keeps
+    # serving replays natively instead of the CPU-tier reload the test
+    # means to exercise. block_size=64, so e.g. GPU_NUM_BLOCKS_OVERRIDE=400
+    # caps this worker at 400*64=25,600 tokens of native GPU KV capacity.
+    NUM_GPU_BLOCKS_FLAG=""
+    if [[ -n "${GPU_NUM_BLOCKS_OVERRIDE:-}" ]]; then
+        echo "    GPU_NUM_BLOCKS_OVERRIDE set: capping native GPU KV cache at $GPU_NUM_BLOCKS_OVERRIDE blocks ($((GPU_NUM_BLOCKS_OVERRIDE * BLOCK_SIZE)) tokens) -- NOT for normal operation."
+        NUM_GPU_BLOCKS_FLAG="--num-gpu-blocks-override $GPU_NUM_BLOCKS_OVERRIDE"
+    fi
+
+    # Optional: disable vLLM's own native prefix caching entirely for this
+    # worker. Not used in normal operation (native prefix caching is a real,
+    # wanted feature) -- exists so test/e2e_lmcache_correctness.py can
+    # isolate the LMCache CPU-tier path cleanly. Shrinking the GPU cache via
+    # GPU_NUM_BLOCKS_OVERRIDE alone was NOT sufficient in testing to force
+    # eviction -- a 42x smaller pool produced identical "Inference Engine
+    # computed tokens" values to the full-size pool, an unexplained
+    # native-cache interaction worth isolating rather than fighting.
+    PREFIX_CACHE_FLAG="--enable-prefix-caching"
+    if [[ "${GPU_DISABLE_NATIVE_PREFIX_CACHE:-0}" == "1" ]]; then
+        echo "    GPU_DISABLE_NATIVE_PREFIX_CACHE=1: vLLM's own native prefix cache is OFF -- NOT for normal operation."
+        PREFIX_CACHE_FLAG="--no-enable-prefix-caching"
+    fi
+
     echo "=== GPU prefill worker $IDX (Docker) on $(hostname) ==="
     echo "    image:      $GPU_IMAGE"
     echo "    RoCE IP:    $LOCAL_IP"
@@ -168,11 +198,12 @@ if [[ "${1:-}" == "--inner" ]]; then
             --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
             --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS" \
             --block-size "$BLOCK_SIZE" \
-            --enable-prefix-caching \
+            $PREFIX_CACHE_FLAG \
             --reasoning-parser minimax_m2_append_think \
             --trust-remote-code \
             --kv-transfer-config "$KV_CONFIG" \
-            --kv-events-config "$KV_EVENTS_CONFIG"
+            --kv-events-config "$KV_EVENTS_CONFIG" \
+            $NUM_GPU_BLOCKS_FLAG
 fi
 
 # ── Outer: submit one SLURM job per configured worker, wait for all to register ──

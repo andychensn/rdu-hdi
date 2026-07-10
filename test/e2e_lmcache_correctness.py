@@ -22,13 +22,23 @@ trials. This test therefore does NOT require 100% of trials to match --
 see --max-mismatches.
 
 Assumes control-plane + >=1 GPU prefill worker + RDU decode are already
-running (same convention as test/e2e_kv_routing.py).
+running (same convention as test/e2e_kv_routing.py). For this test to mean
+anything, GPU prefill must be launched with GPU_DISABLE_NATIVE_PREFIX_CACHE=1
+(passes --no-enable-prefix-caching) -- confirmed empirically that vLLM's own
+native GPU prefix cache otherwise silently serves almost every replay itself
+(this deployment's native GPU KV capacity vastly exceeds what a realistic
+filler volume can evict), making it look like LMCache is being exercised when
+it mostly isn't. A GPU_NUM_BLOCKS_OVERRIDE cache-size reduction was tried as
+an alternative and did NOT help (see genuine_retrieve_for()'s docstring).
 
 Usage:
+  GPU_DISABLE_NATIVE_PREFIX_CACHE=1 bash launch/gpu_prefill.sh
   python3 test/e2e_lmcache_correctness.py
   python3 test/e2e_lmcache_correctness.py --trials 15 --filler-count 15
 
-Exit code: 0 = correctness gate passes, 1 = a trial failed, 2 = setup error.
+Exit code: 0 = correctness gate passes, 1 = a trial failed (or exceeded the
+noise-floor tolerance), 2 = setup error (endpoint unreachable, or too few
+trials genuinely exercised the CPU tier to draw a conclusion either way).
 """
 import argparse
 import glob
@@ -132,7 +142,26 @@ def send(endpoint, model, prompt, max_tokens=2):
 _HIT_LINE_RE = re.compile(
     r"Reqid:\s*([0-9a-fA-F-]+).*?Total tokens\s+(\d+).*?"
     r"Inference Engine computed tokens:\s*(\d+).*?"
-    r"LMCache hit tokens:\s*(\d+)"
+    r"LMCache hit tokens:\s*(\d+).*?"
+    r"need to load:\s*(\d+)"
+)
+
+# The scheduling-time line above is NOT sufficient proof a CPU-tier reload
+# actually happened -- verified directly against lmcache==0.3.15's own source
+# (lmcache/integration/vllm/vllm_v1_adapter.py get_num_new_matched_tokens):
+# "LMCache hit tokens" is the TOTAL length LMCache's own cache lookup
+# matched, independent of whether vLLM's native GPU prefix cache also still
+# has it. The actual amount pulled from LMCache is a SEPARATE value,
+# "need to load" = max(lmcache_hit - engine_computed, 0) -- if vLLM's own
+# GPU cache still covers as much or more, need to load is 0 and nothing is
+# actually read from LMCache's CPU tier, no matter how large "LMCache hit
+# tokens" looks. Confirmed empirically: in initial testing, ~1370 requests
+# logged a "LMCache hit tokens" value (many large, e.g. 512/1792/3840), but
+# only 1 ever had a nonzero "need to load" -- the other cases were the GPU's
+# own native cache silently absorbing the "hit", not a real hit against
+# LMCache's own local_cpu backend.
+_RETRIEVE_LINE_RE = re.compile(
+    r"req_id=(\S+)\]\s*Retrieved\s+(\d+)\s+out of\s+(\d+)\s+required tokens"
 )
 
 
@@ -143,28 +172,55 @@ def lmcache_hit_tokens_for(req_id, log_contents_by_path):
       "Reqid: %s, Total tokens %d, Inference Engine computed tokens: %d,
        LMCache hit tokens: %d, need to load: %d"
 
-    This is the ground-truth discriminator between "vLLM's own native GPU
-    prefix cache already had it" (LMCache hit tokens would be 0 or small --
-    nothing left for LMCache to supply) and "LMCache's CPU tier actually
-    served a meaningful chunk of this request" (a large LMCache hit tokens
-    value). Match is by substring containment of the OpenAI-facing completion
-    id inside LMCache's own (differently-suffixed) internal Reqid field --
+    Match is by substring containment of the OpenAI-facing completion id
+    inside LMCache's own (differently-suffixed) internal Reqid field --
     confirmed correct by direct log inspection (LMCache appends its own
     suffix to the client-visible UUID), not a loose/accidental match. If a
     future vLLM/LMCache version ever changes this id relationship, every
     trial would start returning None here with no other symptom -- if this
     function silently goes quiet across an entire run (0 matches on every
-    trial) where hits are otherwise expected, suspect this correlation first,
-    not just "request too short."
+    trial) where hits are otherwise expected, suspect this correlation
+    first, not just "request too short."
 
-    Returns (engine_computed, lmcache_hit, total, path) for the first match
-    found across all worker logs, or None if no matching line is found at all.
+    Returns (engine_computed, lmcache_hit, need_to_load, total, path) for
+    the first match found across all worker logs, or None if no matching
+    line is found at all. NOTE: this alone does not prove a CPU-tier reload
+    happened -- see _RETRIEVE_LINE_RE / genuine_retrieve_for() for that.
     """
     for path, content in log_contents_by_path.items():
         for m in _HIT_LINE_RE.finditer(content):
             if req_id and req_id in m.group(1):
-                total, engine_computed, lmcache_hit = int(m.group(2)), int(m.group(3)), int(m.group(4))
-                return engine_computed, lmcache_hit, total, path
+                total, engine_computed, lmcache_hit, need_to_load = (
+                    int(m.group(2)), int(m.group(3)), int(m.group(4)), int(m.group(5)))
+                return engine_computed, lmcache_hit, need_to_load, total, path
+    return None
+
+
+def genuine_retrieve_for(req_id, log_contents_by_path):
+    """Grep every worker log for LMCache's own data-movement confirmation.
+
+    Real line (lmcache/v1/cache_engine.py, the actual retrieve() path):
+      "[req_id=%s] Retrieved %d out of %d required tokens (from %d total
+       tokens). size: %s gb, cost %s ms, throughput: %s GB/s;"
+
+    This is logged at the point bytes are actually copied back from
+    LMCache's storage backend to the GPU -- unlike the scheduling-time
+    "LMCache hit tokens" field (which can be reported even when nothing
+    ends up being loaded, see lmcache_hit_tokens_for()'s docstring), a real
+    size/cost/throughput measurement here can only exist if a genuine
+    CPU-tier retrieve happened. This is the actual ground truth for "was
+    the CPU tier exercised," not just "did LMCache's lookup find something."
+
+    Returns (retrieved_tokens, required_tokens, path) for the first match
+    found across all worker logs, or None if no such line exists for this
+    request (i.e. no genuine reload happened, most commonly because vLLM's
+    own native GPU cache still had the data and nothing needed to be
+    pulled from LMCache at all).
+    """
+    for path, content in log_contents_by_path.items():
+        for m in _RETRIEVE_LINE_RE.finditer(content):
+            if req_id and req_id in m.group(1):
+                return int(m.group(2)), int(m.group(3)), path
     return None
 
 
@@ -210,17 +266,27 @@ def run_trial(endpoint, model, trial_idx, prompt_words, filler_count, filler_wor
 
     log_contents = log_reader.refresh()
     hit_info = lmcache_hit_tokens_for(replay_id, log_contents)
+    retrieve_info = genuine_retrieve_for(replay_id, log_contents)
 
     if hit_info:
-        engine_computed, lmcache_hit, total, worker = hit_info
-        print(f"    LMCache log: engine_computed={engine_computed} lmcache_hit={lmcache_hit} "
-              f"total={total} (worker={os.path.basename(worker)})")
+        engine_computed, lmcache_hit, need_to_load, total, worker = hit_info
+        print(f"    LMCache lookup: engine_computed={engine_computed} lmcache_hit={lmcache_hit} "
+              f"need_to_load={need_to_load} total={total} (worker={os.path.basename(worker)})")
     else:
         print("    WARNING: no matching 'Reqid: ... LMCache hit tokens' log line found "
-              "(request may be shorter than chunk_size, served entirely by vLLM's own "
-              "native GPU cache, or -- if this happens on every trial -- the completion-id "
-              "<-> Reqid correlation this check depends on may have broken; see "
-              "lmcache_hit_tokens_for()'s docstring)")
+              "(request may be shorter than chunk_size, or -- if this happens on every "
+              "trial -- the completion-id <-> Reqid correlation this check depends on may "
+              "have broken; see lmcache_hit_tokens_for()'s docstring)")
+
+    if retrieve_info:
+        retrieved, required, worker = retrieve_info
+        print(f"    GENUINE CPU-tier retrieve confirmed: {retrieved}/{required} tokens "
+              f"(worker={os.path.basename(worker)})")
+    else:
+        print("    No genuine retrieve for this request -- either it was a cold miss "
+              "(hit_info shows lmcache_hit=0) or vLLM's own native GPU cache still had "
+              "it (need_to_load=0 despite a nonzero lmcache_hit) -- the CPU tier was not "
+              "actually exercised by this replay.")
 
     correct = (replay_text == baseline_text)
     print(f"  token-for-token match: {'PASS' if correct else 'FAIL'}")
@@ -231,6 +297,7 @@ def run_trial(endpoint, model, trial_idx, prompt_words, filler_count, filler_wor
     return {
         "correct": correct,
         "hit_info": hit_info,
+        "genuine_retrieve": retrieve_info is not None,
     }
 
 
@@ -249,8 +316,29 @@ def main():
                           "floating-point noise floor (a same-N zero-LMCache control "
                           "measured 0-1 mismatches per 10-15 trials). More than this many "
                           "is treated as a real failure, not noise. Default is 2 -- "
-                          "generous relative to the measured baseline, not zero-tolerance.")
+                          "generous relative to the measured baseline, not zero-tolerance. "
+                          "Applied only to trials with a genuine confirmed CPU-tier "
+                          "retrieve (see genuine_retrieve_for()) -- trials that never "
+                          "touched the CPU tier at all don't inform this gate.")
+    ap.add_argument("--min-genuine-retrieves", type=int, default=None,
+                     help="Minimum number of trials that must show a genuine confirmed "
+                          "CPU-tier retrieve (default: half of --trials, rounded up). If "
+                          "fewer than this show a real retrieve, the GPU's own native "
+                          "prefix cache is absorbing most replays before eviction ever "
+                          "happens -- this is a setup problem, not a pass/fail signal about "
+                          "LMCache correctness (exits 2, not 1). Confirmed empirically: "
+                          "shrinking the GPU's own KV cache (a launch/gpu_prefill.sh "
+                          "GPU_NUM_BLOCKS_OVERRIDE=400, a 42x reduction) did NOT fix this -- "
+                          "engine_computed/lmcache_hit values were identical before and "
+                          "after, root cause not fully understood. What DOES work: relaunch "
+                          "GPU prefill with GPU_DISABLE_NATIVE_PREFIX_CACHE=1 (passes "
+                          "--no-enable-prefix-caching), which makes LMCache the only "
+                          "possible source of any hit at all -- 9/15 trials then showed a "
+                          "genuine confirmed retrieve, vs. 0/15 with native caching on.")
     args = ap.parse_args()
+    min_genuine = args.min_genuine_retrieves
+    if min_genuine is None:
+        min_genuine = (args.trials + 1) // 2
 
     cluster_env = load_env(os.path.join(REPO_ROOT, "config", "cluster.env"))
     model_env = load_env(os.path.join(REPO_ROOT, "config", "model.env"))
@@ -277,23 +365,36 @@ def main():
                                   args.filler_count, args.filler_words, log_reader))
 
     print("\n=== Summary ===")
-    n_correct = sum(1 for r in results if r["correct"])
-    n_mismatches = len(results) - n_correct
-    n_lmcache_confirmed = sum(1 for r in results if r["hit_info"] and r["hit_info"][1] > 0)
-    print(f"  token-for-token correct: {n_correct}/{len(results)}")
-    print(f"  trials with a confirmed non-zero LMCache hit: {n_lmcache_confirmed}/{len(results)}")
+    n_lmcache_lookup_hit = sum(1 for r in results if r["hit_info"] and r["hit_info"][1] > 0)
+    genuine_results = [r for r in results if r["genuine_retrieve"]]
+    n_genuine = len(genuine_results)
+    print(f"  trials with a nonzero LMCache lookup (informational only -- can be "
+          f"redundant with a still-resident native GPU cache, see genuine_retrieve_for()): "
+          f"{n_lmcache_lookup_hit}/{len(results)}")
+    print(f"  trials with a GENUINE confirmed CPU-tier retrieve: {n_genuine}/{len(results)}")
+
+    if n_genuine < min_genuine:
+        print(f"  SETUP PROBLEM: only {n_genuine}/{len(results)} trials genuinely exercised "
+              f"the CPU tier (need >= {min_genuine}) -- vLLM's own native GPU cache is "
+              "absorbing most replays before eviction happens. This is not a correctness "
+              "verdict either way. Relaunch GPU prefill with "
+              "GPU_DISABLE_NATIVE_PREFIX_CACHE=1 (confirmed effective: 9/15 genuine "
+              "retrieves vs. 0/15 with native caching on) so LMCache is the only possible "
+              "source of any hit -- a GPU_NUM_BLOCKS_OVERRIDE cache-size reduction alone "
+              "was tried and did NOT help (identical values at 1/42nd the normal capacity).")
+        sys.exit(2)
+
+    n_correct = sum(1 for r in genuine_results if r["correct"])
+    n_mismatches = n_genuine - n_correct
+    print(f"  of the genuine-retrieve trials, token-for-token correct: {n_correct}/{n_genuine}")
 
     if n_mismatches > args.max_mismatches:
-        print(f"  FAIL: {n_mismatches} mismatches exceeds the {args.max_mismatches}-trial "
-              "tolerance for this stack's established floating-point noise floor -- treat as "
-              "possible silent KV corruption, not noise.")
+        print(f"  FAIL: {n_mismatches} mismatches (among genuine CPU-tier retrievals) exceeds "
+              f"the {args.max_mismatches}-trial tolerance for this stack's established "
+              "floating-point noise floor -- treat as possible silent KV corruption, not noise.")
         sys.exit(1)
-    if n_lmcache_confirmed == 0:
-        print("  WARNING: no trial showed a confirmed LMCache hit (all correct, but the "
-              "LMCache CPU tier itself may never have actually been exercised as the "
-              "source of a replay -- consider more filler_count/prompt_words).")
-    print(f"  PASS ({n_mismatches}/{len(results)} mismatches, within the "
-          f"{args.max_mismatches}-trial noise-floor tolerance)")
+    print(f"  PASS ({n_mismatches}/{n_genuine} mismatches among genuine CPU-tier retrievals, "
+          f"within the {args.max_mismatches}-trial noise-floor tolerance)")
     sys.exit(0)
 
 
