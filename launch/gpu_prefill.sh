@@ -21,7 +21,14 @@ LOG_DIR="$REPO_ROOT/logs"
 mkdir -p "$LOG_DIR" "$GPU_CACHE_ROOT"
 TS=$(date +%Y%m%d_%H%M%S)
 
-KV_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_buffer_device":"cuda","enable_permute_local_kv":true,"kv_connector_extra_config":{"enforce_handshake_compat":false,"backends":["UCX"]}}'
+# LMCache (CPU-tier KV-cache offload+reuse, GPU-prefill-only) composed with
+# NixlConnector via vLLM's native MultiConnector -- MultiConnector loads from
+# the first connector (in list order) that advertises cached tokens and saves
+# to all connectors, so LMCache is tried first, falling through to NIXL's
+# cross-node producer/consumer path for the actual GPU->RDU KV handoff.
+# NixlConnector's own extra_config is unchanged from the single-connector
+# setup this replaces. See docs/local/LMCACHE_INTEGRATION_PLAN.md.
+KV_CONFIG='{"kv_connector":"MultiConnector","kv_role":"kv_both","kv_connector_extra_config":{"connectors":[{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"},{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_buffer_device":"cuda","enable_permute_local_kv":true,"kv_connector_extra_config":{"enforce_handshake_compat":false,"backends":["UCX"]}}]}}'
 
 # ── Inner: runs ON the GPU node ───────────────────────────────────────────────
 if [[ "${1:-}" == "--inner" ]]; then
@@ -42,10 +49,17 @@ if [[ "${1:-}" == "--inner" ]]; then
     KV_EVENTS_PORT=$((GPU_KV_EVENTS_BASE_PORT + IDX))
     KV_EVENTS_CONFIG="{\"enable_kv_cache_events\": true, \"endpoint\": \"tcp://*:${KV_EVENTS_PORT}\"}"
 
+    # LMCache config, read from the environment by lmcache's own config
+    # loader -- chunk_size must be an exact multiple of BLOCK_SIZE (LMCache
+    # raises ValueError otherwise), derived here instead of hardcoded so it
+    # can't drift out of sync if BLOCK_SIZE ever changes.
+    LMCACHE_CHUNK_SIZE=$((BLOCK_SIZE * 4))
+
     echo "=== GPU prefill worker $IDX (Docker) on $(hostname) ==="
     echo "    image:      $GPU_IMAGE"
     echo "    RoCE IP:    $LOCAL_IP"
     echo "    NIXL port:  $NIXL_PORT"
+    echo "    LMCache:    chunk_size=$LMCACHE_CHUNK_SIZE max_local_cpu=${LMCACHE_MAX_LOCAL_CPU_GB}GB"
 
     # Mount RDMA/IB devices so UCX can register GPU memory for RoCE NIXL transfer
     RDMA_DEVICES=""
@@ -135,6 +149,9 @@ if [[ "${1:-}" == "--inner" ]]; then
         -e "UCX_TLS=rc,cuda_copy,cuda_ipc" \
         -e "UCX_NET_DEVICES=bnxt_re0:1" \
         -e "UCX_IB_ROCE_REACHABILITY_MODE=all" \
+        -e "LMCACHE_LOCAL_CPU=True" \
+        -e "LMCACHE_MAX_LOCAL_CPU_SIZE=$LMCACHE_MAX_LOCAL_CPU_GB" \
+        -e "LMCACHE_CHUNK_SIZE=$LMCACHE_CHUNK_SIZE" \
         -e "HF_HOME=$GPU_CACHE_ROOT/huggingface" \
         -e "VLLM_CACHE_ROOT=$GPU_CACHE_ROOT/vllm" \
         -e "TRITON_CACHE_DIR=$GPU_CACHE_ROOT/triton" \
