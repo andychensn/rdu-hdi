@@ -41,7 +41,6 @@ if [[ "${1:-}" == "--inner" ]]; then
         -e MODEL_CONFIG="$MODEL_CONFIG" \
         -e GPU_PREFILL_BLOCK_SIZE="$BLOCK_SIZE" \
         -e VLLM_RDU_PLUGIN_TIME_PROFILE=1 \
-        -e RDU_HDI_PROFILE_DIR="$REPO_ROOT/benchmark_results/rdu_traces" \
         "$RDU_IMAGE"
 fi
 
