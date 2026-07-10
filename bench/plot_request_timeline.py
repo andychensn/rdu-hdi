@@ -238,16 +238,36 @@ def main():
     n_rows = len(gantt_rows)
     n_telemetry = len(requested_metrics)
 
-    ROW_IN = 0.26          # inches per request row
-    TELEMETRY_IN = 2.6     # inches per telemetry panel
-    gantt_in = max(2.0, n_rows * ROW_IN + 0.8)
-    fig_h = gantt_in + n_telemetry * TELEMETRY_IN
+    # One Gantt panel PER WORKER (not one shared panel with all workers'
+    # requests interleaved by arrival) -- much easier to read "is this worker
+    # busy or idle right now" when its own rows aren't interspersed with
+    # every other worker's. The x-axis (time) stays shared across every
+    # panel via sharex=True, so it's still just as easy to correlate across
+    # workers (e.g. "worker2 is stuck while worker0/1/3 have gone idle") --
+    # only the y-axis is now split per worker.
+    workers_in_order = list(gpu_map)  # preserves --smi/--gpus arg order
+    rows_by_worker = defaultdict(list)
+    for row in gantt_rows:
+        rows_by_worker[row[1]].append(row)
 
+    ROW_IN = 0.26          # inches per request row
+    MIN_PANEL_IN = 0.9     # floor, so a worker with very few/zero requests still gets a visible panel
+    TELEMETRY_IN = 2.6     # inches per telemetry panel
+    gantt_in_by_worker = {
+        w: max(MIN_PANEL_IN, len(rows_by_worker[w]) * ROW_IN + 0.5) for w in workers_in_order
+    }
+    fig_h = sum(gantt_in_by_worker.values()) + n_telemetry * TELEMETRY_IN
+
+    n_gantt_panels = len(workers_in_order)
     fig, axes = plt.subplots(
-        1 + n_telemetry, 1, figsize=(18, fig_h), sharex=True,
-        gridspec_kw={"hspace": 0.15, "height_ratios": [gantt_in] + [TELEMETRY_IN] * n_telemetry},
+        n_gantt_panels + n_telemetry, 1, figsize=(18, fig_h), sharex=True,
+        gridspec_kw={
+            "hspace": 0.3,
+            "height_ratios": [gantt_in_by_worker[w] for w in workers_in_order]
+                              + [TELEMETRY_IN] * n_telemetry,
+        },
     )
-    if n_telemetry == 0:
+    if n_gantt_panels + n_telemetry == 1:
         axes = [axes]  # plt.subplots returns a bare Axes, not an array, for a single row
     telemetry_suffix = " + GPU telemetry" if n_telemetry else ""
     fig.suptitle(
@@ -257,45 +277,67 @@ def main():
         y=0.99,
     )
 
-    # Worker/GPU/node key, so a reader doesn't have to guess which physical
-    # GPUs (or node) a given worker label refers to -- especially useful once
-    # workers are spread across more than one physical node. Positioned as a
-    # fixed distance (in inches, via a figure-relative offset scaled by
-    # fig_h) below the title rather than a fixed figure-fraction, since the
-    # Gantt panel's height (and therefore the whole figure's height) varies
-    # a lot with the number of requests plotted -- a fixed fraction like 0.96
-    # sits right on top of the title on a short figure and far below it on a
-    # tall one.
-    worker_key_parts = []
-    for label in gpu_map:
-        gpus_str = ",".join(str(g) for g in gpu_map[label])
-        node_str = f"{node_map[label]} " if label in node_map else ""
-        worker_key_parts.append(f"{label}={node_str}GPUs[{gpus_str}]")
-    fig.text(0.5, 1 - 0.35 / fig_h, "  |  ".join(worker_key_parts),
-              ha="center", fontsize=8, color="#555555")
+    legend_handles = [
+        plt.Rectangle((0, 0), 1, 1, color=QUEUE_COLOR, label="queue (arrived, waiting)"),
+        plt.Rectangle((0, 0), 1, 1, color=PREFILL_COLOR, label="prefill compute"),
+    ]
+    if has_xfer:
+        legend_handles.append(plt.Rectangle((0, 0), 1, 1, color=XFER_COLOR, label="KV transfer"))
+    if n_failed:
+        legend_handles.append(
+            plt.Rectangle((0, 0), 1, 1, facecolor="none", edgecolor=FAILED_COLOR, linewidth=1.5,
+                           label=f"FAILED -- prefill finished, never reached decode ({n_failed})")
+        )
 
-    # ── Panel 0: per-request phase Gantt (queue -> prefill -> KV transfer), one row per request ──
-    gantt_ax = axes[0]
     bar_h = 0.8
-    for i, (t_recv, worker, segs, row_end, label_txt, label_color, failed) in enumerate(gantt_rows):
-        y = i - bar_h / 2
-        gantt_ax.broken_barh(
-            [(s[0], s[1]) for s in segs], (y, bar_h),
-            facecolors=[s[2] for s in segs],
-            edgecolor=FAILED_COLOR if failed else "none",
-            linewidth=1.2 if failed else 0,
-        )
-        gantt_ax.annotate(
-            label_txt, xy=(row_end, i), xytext=(4, 0), textcoords="offset points",
-            ha="left", va="center", fontsize=5.5,
-            fontweight="bold" if failed else "normal",
-            color=label_color,
-            annotation_clip=False,
-        )
+    for wi, worker in enumerate(workers_in_order):
+        ax = axes[wi]
+        worker_rows = rows_by_worker[worker]
+        n_rows_w = len(worker_rows)
+        n_failed_w = sum(1 for r in worker_rows if r[6])
+        for i, (t_recv, _worker, segs, row_end, label_txt, label_color, failed) in enumerate(worker_rows):
+            y = i - bar_h / 2
+            ax.broken_barh(
+                [(s[0], s[1]) for s in segs], (y, bar_h),
+                facecolors=[s[2] for s in segs],
+                edgecolor=FAILED_COLOR if failed else "none",
+                linewidth=1.2 if failed else 0,
+            )
+            ax.annotate(
+                label_txt, xy=(row_end, i), xytext=(4, 0), textcoords="offset points",
+                ha="left", va="center", fontsize=5.5,
+                fontweight="bold" if failed else "normal",
+                color=label_color,
+                annotation_clip=False,
+            )
 
-    gantt_ax.set_yticks([])
-    gantt_ax.set_ylim(-1, n_rows)
-    gantt_ax.invert_yaxis()  # earliest-arriving request at the top
+        ax.set_yticks([])
+        ax.set_ylim(-1, max(n_rows_w, 1))
+        ax.invert_yaxis()  # earliest-arriving request at the top
+        # Worker/GPU/node identity + this worker's own request/failure count,
+        # right on its own panel -- no separate figure-wide key needed since
+        # each panel already carries its own worker's identity directly.
+        gpus_str = ",".join(str(g) for g in gpu_map[worker])
+        node_str = f"{node_map[worker]} " if worker in node_map else ""
+        failed_str = f", {n_failed_w} FAILED" if n_failed_w else ""
+        ax.set_ylabel(
+            f"{worker}\n{node_str}GPUs[{gpus_str}]\n({n_rows_w} reqs{failed_str})",
+            fontsize=8, rotation=0, ha="right", va="center", labelpad=10,
+        )
+        ax.grid(axis="x", linestyle=":", linewidth=0.5, alpha=0.5)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        if wi == 0:
+            # Legend lives once, on the top panel -- every panel uses the
+            # same fixed phase-color scheme, so repeating it per panel would
+            # just be clutter.
+            ax.legend(handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.85)
+            if not has_xfer:
+                ax.annotate(
+                    "(no KV-transfer segments found -- decode log needs VLLM_RDU_PLUGIN_TIME_PROFILE=1)",
+                    xy=(0.5, 1.05), xycoords="axes fraction", ha="center", fontsize=7, color="#999",
+                )
+
     # x-axis is shared across all panels (sharex=True), so this one set_xlim
     # call tightly bounds all of them to [start-pad, end+pad] regardless of
     # how far the underlying telemetry CSVs actually extend -- previously the
@@ -304,32 +346,11 @@ def main():
     # tightly-windowed benchmark. annotation_clip=False on the end-of-row
     # labels above still lets them draw past this limit rather than being cut
     # off, so a request ending right at the edge doesn't lose its label.
-    gantt_ax.set_xlim(-args.pad_seconds, (args.end - args.start) + args.pad_seconds)
-    gantt_ax.set_ylabel(f"Requests ({n_rows}), by arrival", fontsize=9)
-    gantt_ax.grid(axis="x", linestyle=":", linewidth=0.5, alpha=0.5)
-    gantt_ax.spines["top"].set_visible(False)
-    gantt_ax.spines["right"].set_visible(False)
-    legend_handles = [
-        plt.Rectangle((0, 0), 1, 1, color=QUEUE_COLOR, label="queue (arrived, waiting)"),
-        plt.Rectangle((0, 0), 1, 1, color=PREFILL_COLOR, label="prefill compute"),
-    ]
-    if has_xfer:
-        legend_handles.append(plt.Rectangle((0, 0), 1, 1, color=XFER_COLOR, label="KV transfer"))
-    else:
-        gantt_ax.annotate(
-            "(no KV-transfer segments found -- decode log needs VLLM_RDU_PLUGIN_TIME_PROFILE=1)",
-            xy=(0.5, 1.02), xycoords="axes fraction", ha="center", fontsize=7, color="#999",
-        )
-    if n_failed:
-        legend_handles.append(
-            plt.Rectangle((0, 0), 1, 1, facecolor="none", edgecolor=FAILED_COLOR, linewidth=1.5,
-                           label=f"FAILED -- prefill finished, never reached decode ({n_failed})")
-        )
-    gantt_ax.legend(handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.85)
+    axes[0].set_xlim(-args.pad_seconds, (args.end - args.start) + args.pad_seconds)
 
     panels = [ALL_METRICS[m] for m in requested_metrics]
 
-    for i, (ax, (field_idx, ylabel, ylim)) in enumerate(zip(axes[1:], panels)):
+    for i, (ax, (field_idx, ylabel, ylim)) in enumerate(zip(axes[n_gantt_panels:], panels)):
         for label, rows in smi_map.items():
             ts, vals = group_series(rows, gpu_map[label], field_idx)
             t_rel = [t - args.start for t in ts]
@@ -341,9 +362,7 @@ def main():
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         if i == 0:
-            # Worker->color key lives here (once) rather than on every panel --
-            # the Gantt legend above explains phases, not which color is which
-            # worker.
+            # Worker->color key lives here (once) rather than on every panel.
             ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
 
     axes[-1].set_xlabel("Time (seconds from benchmark start)", fontsize=10)
@@ -352,9 +371,8 @@ def main():
     # row-end labels aren't standard flow content) and, empirically, leaves
     # a large unpredictable blank gap at the top when there's no telemetry
     # panel to absorb the difference. subplots_adjust's `top` is a direct,
-    # unambiguous figure-fraction, so pair it with the same fixed ~0.7in
-    # reservation the worker-key text above is positioned relative to.
-    fig.subplots_adjust(top=1 - 0.7 / fig_h, left=0.06, right=0.98, bottom=0.05)
+    # unambiguous figure-fraction.
+    fig.subplots_adjust(top=1 - 0.5 / fig_h, left=0.1, right=0.98, bottom=0.05)
     fig.savefig(args.output, dpi=150, bbox_inches="tight")
     print(f"Chart saved -> {args.output}")
 
