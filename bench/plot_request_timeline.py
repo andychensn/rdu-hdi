@@ -185,6 +185,7 @@ def main():
     color_by_worker = {label: palette[i % len(palette)] for i, label in enumerate(smi_map)}
     QUEUE_COLOR = "#d5d8dc"
     PREFILL_COLOR = "#2980b9"
+    DECODE_QUEUE_COLOR = "#e67e22"
     XFER_COLOR = "#f1c40f"
 
     # One row per REQUEST (not per worker) in the Gantt panel -- at
@@ -211,6 +212,12 @@ def main():
             segs.append((t_recv - args.start, t_start - t_recv, QUEUE_COLOR))
         if t_start is not None and t_kv is not None:
             segs.append((t_start - args.start, t_kv - t_start, PREFILL_COLOR))
+        if t_kv is not None and t_xfer_s is not None:
+            # Prefill finished but decode hasn't started pulling KV yet --
+            # confirmed the dominant phase in a decode-capacity-bound run
+            # (vLLM's own scheduler gates transfer-initiation on a free
+            # running slot); previously invisible blank space here.
+            segs.append((t_kv - args.start, t_xfer_s - t_kv, DECODE_QUEUE_COLOR))
         if t_xfer_s is not None and t_xfer_e is not None:
             segs.append((t_xfer_s - args.start, t_xfer_e - t_xfer_s, XFER_COLOR))
             has_xfer = True
@@ -282,6 +289,10 @@ def main():
         plt.Rectangle((0, 0), 1, 1, color=PREFILL_COLOR, label="prefill compute"),
     ]
     if has_xfer:
+        legend_handles.append(
+            plt.Rectangle((0, 0), 1, 1, color=DECODE_QUEUE_COLOR,
+                           label="waiting for decode slot (prefill done, KV not yet pulled)")
+        )
         legend_handles.append(plt.Rectangle((0, 0), 1, 1, color=XFER_COLOR, label="KV transfer"))
     if n_failed:
         legend_handles.append(

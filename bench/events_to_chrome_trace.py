@@ -24,9 +24,17 @@ import sys
 
 # (start_field, end_field, phase_name) -- same fields extract_request_events.py
 # already populates; a phase is only emitted if both timestamps are present.
+# decode_queue (t_kv_ready -> t_xfer_start) covers the gap between prefill
+# finishing and the decode worker actually starting to pull KV -- confirmed
+# earlier this session to be the DOMINANT phase in a decode-capacity-bound
+# run (16-64s, dwarfing prefill/transfer/decode combined), driven by vLLM's
+# own scheduler gating transfer-initiation on a free running slot
+# (max_num_seqs), not by network/transfer speed. Previously this showed up
+# only as unlabeled blank space between the prefill and kv_transfer bars.
 PHASES = [
     ("t_received", "t_started", "queue"),
     ("t_started", "t_kv_ready", "prefill"),
+    ("t_kv_ready", "t_xfer_start", "decode_queue"),
     ("t_xfer_start", "t_xfer_end", "kv_transfer"),
     ("t_xfer_end", "t_completed_decode", "decode"),
 ]
