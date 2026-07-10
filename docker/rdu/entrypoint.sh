@@ -170,9 +170,3 @@ exec env \
         --additional-config "$ADDITIONAL_CONFIG_JSON" \
         --trust-remote-code \
         --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_buffer_device":"rdu","kv_connector_extra_config":{"rdu_mode":"real","rdu_ddr_cache_budget_gb":30,"backends":["UCX"],"enforce_handshake_compat":false}}'
-# No --profiler-config here: dynamo.vllm workers run with api_server_count=0
-# (no vLLM/FastAPI HTTP server at all), so vLLM's own /start_profile and
-# /stop_profile routes are never reachable regardless of this flag --
-# RDUWorker's own profile_control_server.py (a tiny standalone HTTP server,
-# started in init_device()) exposes the same two verbs directly instead.
-# See rdu_hardware/worker.py.
