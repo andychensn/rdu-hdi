@@ -179,10 +179,13 @@ exec env \
         --additional-config "$ADDITIONAL_CONFIG_JSON" \
         --trust-remote-code \
         --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_buffer_device":"rdu","kv_connector_extra_config":{"rdu_mode":"real","rdu_ddr_cache_budget_gb":30,"backends":["UCX"],"enforce_handshake_compat":false}}' \
-        --profiler-config '{"profiler": "torch"}'
+        --profiler-config "{\"profiler\": \"torch\", \"torch_profiler_dir\": \"$RDU_CACHE/unused_torch_profiler_dir\"}"
 # --profiler-config above only needs a non-None `profiler` value to make
 # vLLM register its POST /start_profile + /stop_profile HTTP routes
 # (vllm/entrypoints/serve/profile/api_router.py's attach_router) -- RDUWorker
 # .profile() (rdu_hardware/worker.py) overrides the actual per-worker hook to
 # drive coe_api's own tracing instead of touching torch's profiler at all, so
 # "torch" here is a pass-through gate, not a real torch-profiler activation.
+# torch_profiler_dir is required by ProfilerConfig's own validator whenever
+# profiler="torch" but is never actually written to -- our override never
+# calls torch's profiler.
