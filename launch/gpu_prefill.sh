@@ -27,7 +27,7 @@ TS=$(date +%Y%m%d_%H%M%S)
 # to all connectors, so LMCache is tried first, falling through to NIXL's
 # cross-node producer/consumer path for the actual GPU->RDU KV handoff.
 # NixlConnector's own extra_config is unchanged from the single-connector
-# setup this replaces. See docs/local/LMCACHE_INTEGRATION_PLAN.md.
+# setup this replaces.
 KV_CONFIG='{"kv_connector":"MultiConnector","kv_role":"kv_both","kv_connector_extra_config":{"connectors":[{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"},{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_buffer_device":"cuda","enable_permute_local_kv":true,"kv_connector_extra_config":{"enforce_handshake_compat":false,"backends":["UCX"]}}]}}'
 
 # ── Inner: runs ON the GPU node ───────────────────────────────────────────────

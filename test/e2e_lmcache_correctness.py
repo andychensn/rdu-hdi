@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""E2E correctness gate for LMCache GPU-prefill integration (docs/local/
-LMCACHE_INTEGRATION_PLAN.md §4 step 4).
+"""E2E correctness gate for LMCache GPU-prefill integration.
 
 This is NOT a "did it crash" check -- a prior LMCache release crashed on
 exactly this save path (MultiConnector's wait_for_save() -> LMCacheConnectorV1
@@ -14,13 +13,13 @@ output drift, not a crash -- so this test's bar is token-for-token identical
 output between a cold (no-cache) response and a cache-hit replay, repeated
 multiple times, not just "a hit was reported."
 
-IMPORTANT, established empirically (docs/local/LMCACHE_INTEGRATION_PLAN.md
-§6): this stack has a real, LMCache-INDEPENDENT floating-point noise floor --
-even a confirmed genuine vLLM-native GPU-resident cache hit (zero LMCache
-involvement possible) occasionally produces a different completion on replay,
-from ordinary GPU non-associativity. A same-N control measured 0-1
-mismatches per 10-15 trials. This test therefore does NOT require 100% of
-trials to match -- see --max-mismatches.
+IMPORTANT, established empirically: this stack has a real, LMCache-INDEPENDENT
+floating-point noise floor -- even a confirmed genuine vLLM-native
+GPU-resident cache hit (zero LMCache involvement possible) occasionally
+produces a different completion on replay, from ordinary GPU
+non-associativity. A same-N control measured 0-1 mismatches per 10-15
+trials. This test therefore does NOT require 100% of trials to match --
+see --max-mismatches.
 
 Assumes control-plane + >=1 GPU prefill worker + RDU decode are already
 running (same convention as test/e2e_kv_routing.py).
@@ -247,11 +246,10 @@ def main():
     ap.add_argument("--filler-words", type=int, default=1500)
     ap.add_argument("--max-mismatches", type=int, default=2,
                      help="Tolerance for this stack's established LMCache-independent "
-                          "floating-point noise floor (docs/local/LMCACHE_INTEGRATION_PLAN.md "
-                          "§6: a same-N zero-LMCache control measured 0-1 mismatches per "
-                          "10-15 trials). More than this many is treated as a real failure, "
-                          "not noise. Default is 2 -- generous relative to the measured "
-                          "baseline, not zero-tolerance.")
+                          "floating-point noise floor (a same-N zero-LMCache control "
+                          "measured 0-1 mismatches per 10-15 trials). More than this many "
+                          "is treated as a real failure, not noise. Default is 2 -- "
+                          "generous relative to the measured baseline, not zero-tolerance.")
     args = ap.parse_args()
 
     cluster_env = load_env(os.path.join(REPO_ROOT, "config", "cluster.env"))
