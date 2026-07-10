@@ -26,6 +26,14 @@ export PYTHONNOUSERSITE=1
 : "${PEF:?PEF must be set (compiled PEF path)}"
 : "${MODEL_CONFIG:=}"
 : "${RDU_CACHE:=/tmp/rdu-cache}"
+# Output dir for coe_api Chrome-Trace-format profiles, triggered via
+# POST /start_profile + /stop_profile (see rdu_hardware/worker.py's
+# RDUWorker.profile() override). launch/rdu_decode.sh always passes this
+# explicitly, pointed at an /import path (NFS-mounted into the container via
+# docker-run-wrapper's automatic /import,/scratch mounting, so traces are
+# retrievable directly on the login node, no docker cp needed) -- the
+# /tmp fallback here only applies to a manual/ad-hoc container run.
+: "${RDU_HDI_PROFILE_DIR:=/tmp/rdu_hdi_profiles}"
 
 FAST_COE_SRC=/build/fast-coe
 _UCX_LIB=/opt/rdu-ucx/lib
@@ -153,6 +161,7 @@ exec env \
     HF_HOME="$RDU_CACHE/huggingface" \
     VLLM_CONFIG_ROOT="$RDU_CACHE/vllm_config" \
     TRANSFORMERS_CACHE="$RDU_CACHE/huggingface" \
+    RDU_HDI_PROFILE_DIR="$RDU_HDI_PROFILE_DIR" \
     PYTHONPATH="$FAST_COE_SRC:$FAST_COE_SRC/server/inference-router/client-py:$FAST_COE_SRC/server/block_hash:${PYTHONPATH:-}" \
     LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$_BAR2_LIB:${LD_LIBRARY_PATH:-}" \
     LD_PRELOAD="$_BAR2_PRELOAD/libc_samba_runtime.so:$_BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
@@ -169,4 +178,11 @@ exec env \
         --compilation-config '{"mode": 0}' \
         --additional-config "$ADDITIONAL_CONFIG_JSON" \
         --trust-remote-code \
-        --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_buffer_device":"rdu","kv_connector_extra_config":{"rdu_mode":"real","rdu_ddr_cache_budget_gb":30,"backends":["UCX"],"enforce_handshake_compat":false}}'
+        --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_buffer_device":"rdu","kv_connector_extra_config":{"rdu_mode":"real","rdu_ddr_cache_budget_gb":30,"backends":["UCX"],"enforce_handshake_compat":false}}' \
+        --profiler-config '{"profiler": "torch"}'
+# --profiler-config above only needs a non-None `profiler` value to make
+# vLLM register its POST /start_profile + /stop_profile HTTP routes
+# (vllm/entrypoints/serve/profile/api_router.py's attach_router) -- RDUWorker
+# .profile() (rdu_hardware/worker.py) overrides the actual per-worker hook to
+# drive coe_api's own tracing instead of touching torch's profiler at all, so
+# "torch" here is a pass-through gate, not a real torch-profiler activation.
