@@ -91,6 +91,28 @@ if [[ "${1:-}" == "--inner" ]]; then
     echo "    NIXL port:  $NIXL_PORT"
     echo "    LMCache:    chunk_size=$LMCACHE_CHUNK_SIZE max_local_cpu=${LMCACHE_MAX_LOCAL_CPU_GB}GB"
 
+    # Pre-flight: refuse to start if this job's allocated GPUs already show
+    # non-trivial memory in use. The Docker container name below is unique
+    # per SLURM job (so a stuck container from a prior failed/torn-down
+    # launch can no longer block a retry with a "name already in use"
+    # error) -- but that also means a leaked process still holding these
+    # same physical GPUs would otherwise go unnoticed until this worker's
+    # own engine fails with a confusing CUDA OOM/bind error deep in its own
+    # startup log, or silently contends for memory instead of failing at
+    # all. This check restores a fast, clear failure with an actionable
+    # next step, scoped to nvidia-smi (no docker-wrapper/sudo needed).
+    STALE_MEM_MIB=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null \
+        | awk '{sum+=$1} END {print sum+0}')
+    if [[ "${STALE_MEM_MIB:-0}" -gt 2048 ]]; then
+        echo "ERROR: worker $IDX's allocated GPUs already show ${STALE_MEM_MIB} MiB in use before" >&2
+        echo "this launch even starts -- likely a leaked process from a prior failed/torn-down" >&2
+        echo "job (or another job sharing this reservation). Refusing to start a new engine that" >&2
+        echo "would silently contend for the same GPUs. Run on this node:" >&2
+        echo "  nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv" >&2
+        echo "to identify and (if it's your own leaked process) kill it before retrying." >&2
+        exit 1
+    fi
+
     # Mount RDMA/IB devices so UCX can register GPU memory for RoCE NIXL transfer
     RDMA_DEVICES=""
     for dev in /dev/infiniband /dev/uverbs* /dev/nvidia-uvm /dev/nvidiactl; do
