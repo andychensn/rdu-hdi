@@ -164,7 +164,7 @@ if [[ "${1:-}" == "--inner" ]]; then
     exec "${NUMACTL_PREFIX[@]}" sudo -g docker /usr/bin/cuda-docker-run-wrapper \
         --pull=always \
         --net=host --rm \
-        --name "gpu-prefill-${IDX}" \
+        --name "gpu-prefill-${IDX}-${SLURM_JOB_ID}" \
         --entrypoint python3 \
         --ulimit memlock=-1 \
         $RDMA_DEVICES \
