@@ -49,6 +49,15 @@ echo "Starting Dynamo frontend on 0.0.0.0:$VLLM_PORT (router-mode kv, block-size
 # logits instead of deterministic argmin -- with only 2 prefill workers,
 # deterministic selection risks pinning all cache-hit traffic on one worker;
 # revisit as worker count grows and full determinism becomes safer.
+# --active-decode-blocks-threshold None: disables the router's binary
+# busy/free gate for decode workers (default 1.0 = reject outright once a
+# worker's KV-block utilization hits 100%, which a --max-num-seqs=2 decode
+# instance reaches at just 2 concurrent requests). Confirmed live that this
+# gate was rejecting prefill-already-completed requests with "Service
+# Unavailable" instead of letting them queue -- vLLM's own scheduler already
+# queues correctly once a request reaches it, so with a single decode
+# worker (nothing to route around it toward) this check can only reject
+# incorrectly, never help. Revisit once a second decode worker exists.
 exec env \
     ETCD_ENDPOINTS="http://$CONTROL_PLANE_IP:$ETCD_PORT" \
     NATS_SERVER="nats://$CONTROL_PLANE_IP:$NATS_PORT" \
@@ -56,4 +65,5 @@ exec env \
         --router-mode kv \
         --kv-cache-block-size "$BLOCK_SIZE" \
         --router-kv-overlap-score-credit 1.0 \
-        --router-temperature 0.4
+        --router-temperature 0.4 \
+        --active-decode-blocks-threshold None
