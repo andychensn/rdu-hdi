@@ -108,6 +108,14 @@ def main():
     )
     ap.add_argument("--smi", action="append", required=True, help="worker_label=path.csv (repeatable)")
     ap.add_argument("--gpus", action="append", required=True, help="worker_label=0,1,2,3 (repeatable)")
+    ap.add_argument(
+        "--node",
+        action="append",
+        default=[],
+        help="worker_label=hostname (repeatable, optional) -- rendered as a worker/GPU/node key "
+             "under the title so a reader doesn't have to guess which physical GPUs/node each "
+             "worker label refers to. Safe to omit if all workers are on one node.",
+    )
     ap.add_argument("--events", required=True, help="JSON from extract_request_events.py")
     ap.add_argument("--start", type=float, required=True, help="benchmark start, unix epoch UTC")
     ap.add_argument("--end", type=float, required=True, help="benchmark end, unix epoch UTC")
@@ -153,6 +161,11 @@ def main():
         label, idxs = spec.split("=", 1)
         gpu_map[label] = [int(x) for x in idxs.split(",")]
 
+    node_map = {}
+    for spec in args.node:
+        label, hostname = spec.split("=", 1)
+        node_map[label] = hostname
+
     smi_map = {}
     for spec in args.smi:
         label, path = spec.split("=", 1)
@@ -161,10 +174,18 @@ def main():
 
     events = json.load(open(args.events))
 
+    # Worker identity is conveyed by the row label text (e.g. "worker0#3") and
+    # the worker/GPU/node key below the title -- NOT by bar fill color. Bar
+    # fill color is a fixed 3-color phase legend (queue/prefill/transfer) so
+    # the chart always matches its own legend regardless of worker count.
+    # color_by_worker still exists for label-text color (a cheap way to
+    # visually group a worker's own rows) and for the optional --metrics
+    # telemetry panels, which do still plot one line per worker.
     palette = ["#2980b9", "#e74c3c", "#27ae60", "#8e44ad"]
     color_by_worker = {label: palette[i % len(palette)] for i, label in enumerate(smi_map)}
-    QUEUE_COLOR = "#bdc3c7"
-    XFER_COLOR = "#f39c12"
+    QUEUE_COLOR = "#d5d8dc"
+    PREFILL_COLOR = "#2980b9"
+    XFER_COLOR = "#f1c40f"
 
     # One row per REQUEST (not per worker) in the Gantt panel -- at
     # concurrency > 1, multiple requests can be queued/computing on the same
@@ -189,7 +210,7 @@ def main():
         if t_recv is not None and t_start is not None:
             segs.append((t_recv - args.start, t_start - t_recv, QUEUE_COLOR))
         if t_start is not None and t_kv is not None:
-            segs.append((t_start - args.start, t_kv - t_start, color_by_worker[worker]))
+            segs.append((t_start - args.start, t_kv - t_start, PREFILL_COLOR))
         if t_xfer_s is not None and t_xfer_e is not None:
             segs.append((t_xfer_s - args.start, t_xfer_e - t_xfer_s, XFER_COLOR))
             has_xfer = True
@@ -228,11 +249,30 @@ def main():
     )
     if n_telemetry == 0:
         axes = [axes]  # plt.subplots returns a bare Axes, not an array, for a single row
+    telemetry_suffix = " + GPU telemetry" if n_telemetry else ""
     fig.suptitle(
-        f"Per-request phase timeline + GPU telemetry{(' — ' + args.title) if args.title else ''}",
+        f"Per-request phase timeline{telemetry_suffix}{(' — ' + args.title) if args.title else ''}",
         fontsize=12,
         fontweight="bold",
+        y=0.99,
     )
+
+    # Worker/GPU/node key, so a reader doesn't have to guess which physical
+    # GPUs (or node) a given worker label refers to -- especially useful once
+    # workers are spread across more than one physical node. Positioned as a
+    # fixed distance (in inches, via a figure-relative offset scaled by
+    # fig_h) below the title rather than a fixed figure-fraction, since the
+    # Gantt panel's height (and therefore the whole figure's height) varies
+    # a lot with the number of requests plotted -- a fixed fraction like 0.96
+    # sits right on top of the title on a short figure and far below it on a
+    # tall one.
+    worker_key_parts = []
+    for label in gpu_map:
+        gpus_str = ",".join(str(g) for g in gpu_map[label])
+        node_str = f"{node_map[label]} " if label in node_map else ""
+        worker_key_parts.append(f"{label}={node_str}GPUs[{gpus_str}]")
+    fig.text(0.5, 1 - 0.35 / fig_h, "  |  ".join(worker_key_parts),
+              ha="center", fontsize=8, color="#555555")
 
     # ── Panel 0: per-request phase Gantt (queue -> prefill -> KV transfer), one row per request ──
     gantt_ax = axes[0]
@@ -271,7 +311,7 @@ def main():
     gantt_ax.spines["right"].set_visible(False)
     legend_handles = [
         plt.Rectangle((0, 0), 1, 1, color=QUEUE_COLOR, label="queue (arrived, waiting)"),
-        plt.Rectangle((0, 0), 1, 1, color="#7f8c8d", label="prefill compute (worker's own color)"),
+        plt.Rectangle((0, 0), 1, 1, color=PREFILL_COLOR, label="prefill compute"),
     ]
     if has_xfer:
         legend_handles.append(plt.Rectangle((0, 0), 1, 1, color=XFER_COLOR, label="KV transfer"))
@@ -307,7 +347,14 @@ def main():
             ax.legend(loc="upper right", fontsize=9, framealpha=0.85)
 
     axes[-1].set_xlabel("Time (seconds from benchmark start)", fontsize=10)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    # subplots_adjust (not tight_layout) for the top margin: tight_layout
+    # warns it's "not compatible" with this figure (the annotation_clip=False
+    # row-end labels aren't standard flow content) and, empirically, leaves
+    # a large unpredictable blank gap at the top when there's no telemetry
+    # panel to absorb the difference. subplots_adjust's `top` is a direct,
+    # unambiguous figure-fraction, so pair it with the same fixed ~0.7in
+    # reservation the worker-key text above is positioned relative to.
+    fig.subplots_adjust(top=1 - 0.7 / fig_h, left=0.06, right=0.98, bottom=0.05)
     fig.savefig(args.output, dpi=150, bbox_inches="tight")
     print(f"Chart saved -> {args.output}")
 
