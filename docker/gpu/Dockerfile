@@ -10,6 +10,9 @@
 #     support so the GPU prefill producer can coordinate KV transfer with
 #     the RDU decode consumer
 #   - ai-dynamo — dynamo.vllm + dynamo.frontend Python modules (no [vllm] extra: that upgrades vllm to 0.20.x)
+#   - lmcache — GPU-prefill-side KV cache CPU-tier offload, composed with
+#     NixlConnector via vLLM's native MultiConnector at launch time (see
+#     config/versions.env's LMCACHE_VERSION comment for the version pin story)
 #
 # Build (from login node sc-vnc9):
 #   bash docker/gpu/build.sh
@@ -108,6 +111,25 @@ RUN NIXL_WHL=$(ls /tmp/nixl-wheels/nixl_cu12-*.whl | head -1) && \
 # which breaks MiniMax-M2.7. The dynamo.vllm module is in the base ai-dynamo package.
 ARG DYNAMO_VERSION
 RUN pip install "ai-dynamo==${DYNAMO_VERSION}" "ai-dynamo-runtime==${DYNAMO_VERSION}"
+
+# Install LMCache — GPU-prefill-side KV cache CPU-tier offload, composed with
+# NixlConnector via vLLM's native MultiConnector at launch time (RDU decode is
+# untouched). Pinned to 0.3.x, NOT latest -- see config/versions.env's
+# LMCACHE_VERSION comment for the full story (a torch/CUDA ABI mismatch in
+# later releases' precompiled c_ops extension silently disables the compiled
+# HND kernel and falls back to an incomplete pure-Python path that crashes on
+# the first real request). This base image already ships lmcache 0.3.14
+# pre-installed (vLLM's own validated pin) with fully-satisfied dependencies,
+# so no --no-deps/manual-dependency-list dance is needed here — this is a
+# same-family patch upgrade, not a fresh install pulling in new packages.
+ARG LMCACHE_VERSION
+RUN pip install "lmcache==${LMCACHE_VERSION}" && \
+    python3 -c "import vllm; assert vllm.__version__.startswith('0.16'), f'vllm drifted to {vllm.__version__}'; print('vllm still 0.16.x:', vllm.__version__)" && \
+    python3 -c "import importlib.metadata; print('lmcache:', importlib.metadata.version('lmcache'))" && \
+    python3 -c "import torch; import lmcache.c_ops; print('lmcache.c_ops (compiled ext): OK')" && \
+    python3 -c "from nixl._api import nixl_agent; print('nixl (custom /opt/ucx build) still importable after lmcache install: OK')" && \
+    python3 -c "from vllm.distributed.kv_transfer.kv_connector.v1.lmcache_connector import LMCacheConnectorV1; print('LMCacheConnectorV1: OK')" && \
+    python3 -c "from vllm.distributed.kv_transfer.kv_connector.v1.multi_connector import MultiConnector; print('MultiConnector: OK')"
 
 # Overlay nixl_connector.py with REGISTER_CONSUMER_MSG handshake support
 # (md5 5cd6b474372f1d8490e380a82d1fd226).

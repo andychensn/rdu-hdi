@@ -71,6 +71,7 @@ echo "    vllm:        $VLLM_VERSION"
 echo "    UCX:         $UCX_BRANCH @ $UCX_COMMIT"
 echo "    NIXL:        $NIXL_BRANCH @ $NIXL_COMMIT"
 echo "    Dynamo:      $DYNAMO_VERSION"
+echo "    LMCache:     $LMCACHE_VERSION"
 echo ""
 
 # docker/gpu/Dockerfile's ARGs have no defaults — every pin must come from here
@@ -89,6 +90,7 @@ sudo -g docker /usr/bin/docker-wrapper build \
     --build-arg NIXL_COMMIT="$NIXL_COMMIT" \
     --build-arg NIXL_BRANCH="$NIXL_BRANCH" \
     --build-arg DYNAMO_VERSION="$DYNAMO_VERSION" \
+    --build-arg LMCACHE_VERSION="$LMCACHE_VERSION" \
     -t "$FULL_IMAGE" \
     -f "$REPO_ROOT/docker/gpu/Dockerfile" \
     "$REPO_ROOT"
