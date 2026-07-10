@@ -171,9 +171,11 @@ def main():
     # worker at once, and cramming them onto one row per worker makes them
     # unreadably overlapped. One row per request instead directly shows how
     # many requests are in flight at any given time, with zero overlap.
+    FAILED_COLOR = "#c0392b"
     per_worker_idx = defaultdict(int)
     gantt_rows = []
     has_xfer = False
+    n_failed = 0
     for rec in events:
         worker = rec.get("worker")
         if worker not in color_by_worker:
@@ -196,8 +198,20 @@ def main():
         per_worker_idx[worker] += 1
         row_end = max(s[0] + s[1] for s in segs)
         row_start = min(s[0] for s in segs)
+        # Prefill finished (t_kv_ready present) but the request never reached
+        # decode (no t_completed_decode) -- a genuine failure/drop, not just
+        # "this trial didn't have decode profiling enabled" (which would be
+        # uniform across every record, not a subset of them). Distinct from a
+        # merely-fast successful request, which would still show real xfer
+        # segments if any other record in this same dataset does.
+        failed = t_kv is not None and rec.get("t_completed_decode") is None
+        if failed:
+            n_failed += 1
+        label_color = FAILED_COLOR if failed else color_by_worker[worker]
         label_txt = f"{worker}#{per_worker_idx[worker]} {round((row_end - row_start) * 1000)}ms"
-        gantt_rows.append((t_recv, worker, segs, row_end, label_txt))
+        if failed:
+            label_txt += " FAILED (no decode completion)"
+        gantt_rows.append((t_recv, worker, segs, row_end, label_txt, label_color, failed))
 
     gantt_rows.sort(key=lambda r: r[0])
     n_rows = len(gantt_rows)
@@ -223,13 +237,19 @@ def main():
     # ── Panel 0: per-request phase Gantt (queue -> prefill -> KV transfer), one row per request ──
     gantt_ax = axes[0]
     bar_h = 0.8
-    for i, (t_recv, worker, segs, row_end, label_txt) in enumerate(gantt_rows):
+    for i, (t_recv, worker, segs, row_end, label_txt, label_color, failed) in enumerate(gantt_rows):
         y = i - bar_h / 2
-        gantt_ax.broken_barh([(s[0], s[1]) for s in segs], (y, bar_h),
-                              facecolors=[s[2] for s in segs], edgecolor="none")
+        gantt_ax.broken_barh(
+            [(s[0], s[1]) for s in segs], (y, bar_h),
+            facecolors=[s[2] for s in segs],
+            edgecolor=FAILED_COLOR if failed else "none",
+            linewidth=1.2 if failed else 0,
+        )
         gantt_ax.annotate(
             label_txt, xy=(row_end, i), xytext=(4, 0), textcoords="offset points",
-            ha="left", va="center", fontsize=5.5, color=color_by_worker[worker],
+            ha="left", va="center", fontsize=5.5,
+            fontweight="bold" if failed else "normal",
+            color=label_color,
             annotation_clip=False,
         )
 
@@ -259,6 +279,11 @@ def main():
         gantt_ax.annotate(
             "(no KV-transfer segments found -- decode log needs VLLM_RDU_PLUGIN_TIME_PROFILE=1)",
             xy=(0.5, 1.02), xycoords="axes fraction", ha="center", fontsize=7, color="#999",
+        )
+    if n_failed:
+        legend_handles.append(
+            plt.Rectangle((0, 0), 1, 1, facecolor="none", edgecolor=FAILED_COLOR, linewidth=1.5,
+                           label=f"FAILED -- prefill finished, never reached decode ({n_failed})")
         )
     gantt_ax.legend(handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.85)
 
