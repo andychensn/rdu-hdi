@@ -55,6 +55,29 @@ if [[ "${1:-}" == "--inner" ]]; then
     # can't drift out of sync if BLOCK_SIZE ever changes.
     LMCACHE_CHUNK_SIZE=$((BLOCK_SIZE * 4))
 
+    # Optional local-disk tier (see config/model.env's LMCACHE_MAX_LOCAL_DISK_GB
+    # comment) -- on by default; set LMCACHE_MAX_LOCAL_DISK_GB=0 to disable.
+    # Mounted under GPU_CACHE_ROOT (NFS, already auto-mounted into the
+    # container), so it survives a worker restart even though the CPU tier
+    # (pure in-process memory) does not.
+    # Scoped per worker index (LMCACHE_DISK_PATH, not a shared directory):
+    # the on-disk cache key filename encodes only (model, world_size,
+    # TP-rank, chunk_hash), which repeats identically across independent
+    # worker processes -- a shared path relies on Python's own randomized
+    # hash() (LMCache's default "builtin" chunk-hash algorithm) to avoid
+    # cross-worker collisions, which is incidental, not structural
+    # (PYTHONHASHSEED is unset anywhere in this repo).
+    LMCACHE_DISK_FLAGS=()
+    if [[ "${LMCACHE_MAX_LOCAL_DISK_GB:-0}" != "0" ]]; then
+        LMCACHE_DISK_PATH="$GPU_CACHE_ROOT/lmcache_disk/worker$IDX"
+        mkdir -p "$LMCACHE_DISK_PATH"
+        LMCACHE_DISK_FLAGS=(
+            -e "LMCACHE_LOCAL_DISK=$LMCACHE_DISK_PATH"
+            -e "LMCACHE_MAX_LOCAL_DISK_SIZE=$LMCACHE_MAX_LOCAL_DISK_GB"
+        )
+        echo "    LMCache disk tier ENABLED: $LMCACHE_DISK_PATH, ${LMCACHE_MAX_LOCAL_DISK_GB}GB -- not yet sized against a real workload, see config/model.env"
+    fi
+
     # Optional: shrink vLLM's own native GPU KV cache for this worker.
     # Not used in normal operation (the whole point of a large GPU cache is
     # to serve as much as possible without ever needing LMCache's CPU
@@ -204,6 +227,8 @@ if [[ "${1:-}" == "--inner" ]]; then
         -e "LMCACHE_LOCAL_CPU=True" \
         -e "LMCACHE_MAX_LOCAL_CPU_SIZE=$LMCACHE_MAX_LOCAL_CPU_GB" \
         -e "LMCACHE_CHUNK_SIZE=$LMCACHE_CHUNK_SIZE" \
+        -e "LMCACHE_LOG_LEVEL=${LMCACHE_LOG_LEVEL:-INFO}" \
+        "${LMCACHE_DISK_FLAGS[@]}" \
         -e "HF_HOME=$GPU_CACHE_ROOT/huggingface" \
         -e "VLLM_CACHE_ROOT=$GPU_CACHE_ROOT/vllm" \
         -e "TRITON_CACHE_DIR=$GPU_CACHE_ROOT/triton" \
