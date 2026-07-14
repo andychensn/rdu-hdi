@@ -66,6 +66,41 @@ else
     echo "=== Broadcom OOT libbnxt_re already in .rdma-libs/ ==="
 fi
 
+# ── UCX + NIXL source (SambaNova org fork, internal GitHub Enterprise) ───────
+# Cloned here, host-side (needs the invoking user's own SSH access to
+# github.sambanovasystems.com), rather than inside the Dockerfile's own
+# `docker build` — the isolated build container has no credentials for the
+# internal GitHub Enterprise host. docker/gpu/Dockerfile just COPYs the
+# already-pinned source staged here (same shape as build/bar2.sh's
+# fetch_sources() for SambaNova/software).
+GPU_BUILD_SRC_DIR="$REPO_ROOT/gpu-build-src"
+mkdir -p "$GPU_BUILD_SRC_DIR"
+
+fetch_pinned_source() {
+    local name="$1" url="$2" branch="$3" commit="$4"
+    local dest="$GPU_BUILD_SRC_DIR/$name"
+
+    if [ -d "$dest/.git" ] && [ "$(git -C "$dest" rev-parse HEAD)" = "$commit" ]; then
+        echo "=== $name already at pinned commit in gpu-build-src/$name ==="
+        return
+    fi
+
+    echo "=== Fetching $name @ $commit ==="
+    rm -rf "$dest"
+    git clone --branch "$branch" --depth 1 "$url" "$dest"
+    if [ "$(git -C "$dest" rev-parse HEAD)" != "$commit" ]; then
+        echo "  branch tip has moved past the pin — fetching the exact commit explicitly..."
+        git -C "$dest" fetch --depth 1 origin "$commit"
+        git -C "$dest" checkout "$commit"
+    fi
+    # .git is kept (small, shallow) so re-running this script can skip the
+    # clone entirely once already at the pinned commit -- see the check above.
+    echo "  staged $name @ $commit"
+}
+
+fetch_pinned_source ucx "$UCX_URL" "$UCX_BRANCH" "$UCX_COMMIT"
+fetch_pinned_source nixl "$NIXL_URL" "$NIXL_BRANCH" "$NIXL_COMMIT"
+
 echo "=== Building $FULL_IMAGE ==="
 echo "    vllm:        $VLLM_VERSION"
 echo "    UCX:         $UCX_BRANCH @ $UCX_COMMIT"
@@ -76,7 +111,9 @@ echo ""
 
 # docker/gpu/Dockerfile's ARGs have no defaults — every pin must come from here
 # (config/versions.env), or the build fails loudly instead of silently
-# using a stale value baked into the Dockerfile.
+# using a stale value baked into the Dockerfile. UCX/NIXL are NOT passed as
+# build-args (unlike VLLM/DYNAMO/LMCACHE below) -- their pin is already baked
+# into the gpu-build-src/ checkout staged above; the Dockerfile just COPYs it.
 BUILD_FLAGS=()
 if [ "$NO_CACHE" = "true" ]; then
     echo "    (--no-cache: forcing a cold rebuild, ignoring any cached layers)"
@@ -85,10 +122,6 @@ fi
 sudo -g docker /usr/bin/docker-wrapper build \
     "${BUILD_FLAGS[@]}" \
     --build-arg VLLM_VERSION="v$VLLM_VERSION" \
-    --build-arg UCX_COMMIT="$UCX_COMMIT" \
-    --build-arg UCX_BRANCH="$UCX_BRANCH" \
-    --build-arg NIXL_COMMIT="$NIXL_COMMIT" \
-    --build-arg NIXL_BRANCH="$NIXL_BRANCH" \
     --build-arg DYNAMO_VERSION="$DYNAMO_VERSION" \
     --build-arg LMCACHE_VERSION="$LMCACHE_VERSION" \
     -t "$FULL_IMAGE" \

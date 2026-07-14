@@ -75,8 +75,8 @@ fetch_sources() {
             exit 1
         fi
     else
-        echo "  Cloning sambanova/fast-coe@$FAST_COE_COMMIT..."
-        git clone git@github.com:sambanova/fast-coe.git "$FAST_COE_SRC"
+        echo "  Cloning $FAST_COE_URL@$FAST_COE_COMMIT..."
+        git clone --branch "$FAST_COE_BRANCH" "$FAST_COE_URL" "$FAST_COE_SRC"
         git -C "$FAST_COE_SRC" checkout "$FAST_COE_COMMIT"
         echo "  fast-coe cloned + pinned ✅"
         for p in server/vllm-rdu/rdu_hardware/connector_override.py \
@@ -228,11 +228,14 @@ PYEOF
         echo "    csrc/cpu/utils.hpp: L2_cache_size call not found (already patched or upstream changed)"
     fi
 
-    # ── UCX + NIXL source ──────────────────────────────────────────────────────
+    # ── UCX + NIXL source (SambaNova org fork, internal GitHub Enterprise) ────
+    # Needs SSH access to github.sambanovasystems.com — this script runs
+    # host-side (not inside a Docker build), so it uses whatever git
+    # credentials the invoking user already has.
     if [ ! -d "$SRC_DIR/ucx/.git" ]; then
-        echo "  Cloning andychensn/ucx@$UCX_COMMIT..."
+        echo "  Cloning UCX @ $UCX_COMMIT..."
         git clone --depth=200 --branch "$UCX_BRANCH" \
-            https://github.com/andychensn/ucx.git "$SRC_DIR/ucx"
+            "$UCX_URL" "$SRC_DIR/ucx"
         git -C "$SRC_DIR/ucx" checkout "$UCX_COMMIT"
         echo "  UCX cloned ✅"
     else
@@ -240,9 +243,9 @@ PYEOF
     fi
 
     if [ ! -d "$SRC_DIR/nixl/.git" ]; then
-        echo "  Cloning andychensn/nixl@$NIXL_COMMIT..."
+        echo "  Cloning NIXL @ $NIXL_COMMIT..."
         git clone --depth=50 --branch "$NIXL_BRANCH" \
-            https://github.com/andychensn/nixl.git "$SRC_DIR/nixl"
+            "$NIXL_URL" "$SRC_DIR/nixl"
         git -C "$SRC_DIR/nixl" checkout "$NIXL_COMMIT"
         echo "  NIXL cloned ✅"
     else

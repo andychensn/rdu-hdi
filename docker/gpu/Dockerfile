@@ -2,9 +2,14 @@
 #
 # Layers on top of vllm/vllm-openai:${VLLM_VERSION} (stock image with torch,
 # vllm, flashinfer, deepgemm already installed):
-#   - UCX (andychensn/ucx) — bnxt_re RoCE RDMA support; branch/commit pinned
-#     in config/versions.env, NOT hardcoded here (see ARGs below)
-#   - NIXL (andychensn/nixl) — KV cache transfer library; same pinning rule
+#   - UCX (open-source/ucx, SambaNova org fork) — bnxt_re RoCE RDMA support;
+#     branch/commit pinned in config/versions.env. Source is staged
+#     host-side by docker/gpu/build.sh into gpu-build-src/ucx/ (git-cloned
+#     there, over SSH, since the isolated `docker build` context has no
+#     credentials for the internal GitHub Enterprise host) and just COPYd
+#     in below — NOT git-cloned inside this Dockerfile.
+#   - NIXL (open-source/nixl, SambaNova org fork) — KV cache transfer
+#     library; same staging rule, gpu-build-src/nixl/
 #   - patches/gpu/nixl_connector.py overlay — replaces vllm's stock
 #     nixl_connector.py wholesale, adding REGISTER_CONSUMER_MSG handshake
 #     support so the GPU prefill producer can coordinate KV transfer with
@@ -41,14 +46,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends cuda-nvml-dev-${CUDA_MAJ} 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
 
-# Build UCX 1.22 with CUDA and bnxt_re verbs support
-ARG UCX_COMMIT
-ARG UCX_BRANCH
-RUN git clone --depth=200 --branch ${UCX_BRANCH} \
-        https://github.com/andychensn/ucx.git /tmp/ucx-src && \
-    git -C /tmp/ucx-src checkout ${UCX_COMMIT} && \
-    # Strip GDAKI (DOCA/mlx5 GPU-Direct-Async) — not needed, avoids build failures
-    sed -i 's/^SUBDIRS = \. gdaki/SUBDIRS = ./' \
+# Build UCX 1.22 with CUDA and bnxt_re verbs support.
+# Source already pinned + staged by docker/gpu/build.sh (see top-of-file
+# comment) — no git clone/checkout here, just COPY the working tree in.
+# Strip GDAKI (DOCA/mlx5 GPU-Direct-Async) below — not needed, avoids build failures.
+COPY gpu-build-src/ucx /tmp/ucx-src
+RUN sed -i 's/^SUBDIRS = \. gdaki/SUBDIRS = ./' \
         /tmp/ucx-src/src/uct/ib/mlx5/Makefile.am 2>/dev/null || true && \
     sed -i '\#m4_include(\[src/uct/ib/mlx5/gdaki/configure.m4\])#d' \
         /tmp/ucx-src/src/uct/ib/mlx5/configure.m4 2>/dev/null || true && \
@@ -73,13 +76,11 @@ RUN git clone --depth=200 --branch ${UCX_BRANCH} \
     rm -rf /tmp/ucx-src && \
     echo "UCX IB transports: $(ls /opt/ucx/lib/ucx/libuct_ib*.so 2>/dev/null | wc -l)"
 
-# Build NIXL wheel with UCX and CUDA backends
-ARG NIXL_COMMIT
-ARG NIXL_BRANCH
+# Build NIXL wheel with UCX and CUDA backends.
+# Source already pinned + staged by docker/gpu/build.sh (see top-of-file
+# comment) — no git clone/checkout here, just COPY the working tree in.
+COPY gpu-build-src/nixl /tmp/nixl-src
 RUN pip install meson-python pybind11 patchelf pyyaml setuptools build wheel && \
-    git clone --depth=50 --branch ${NIXL_BRANCH} \
-        https://github.com/andychensn/nixl.git /tmp/nixl-src && \
-    git -C /tmp/nixl-src checkout ${NIXL_COMMIT} && \
     mkdir -p /tmp/nixl-wheels && \
     LIBRARY_PATH=/opt/ucx/lib \
     LD_LIBRARY_PATH=/opt/ucx/lib \

@@ -27,6 +27,7 @@ vendor/bin/
 rdu-build-src/
 bar2-build-src/
 rdu-runtime-install/
+gpu-build-src/
 
 # Cluster-specific local notes
 docs/local/
