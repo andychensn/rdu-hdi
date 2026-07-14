@@ -262,22 +262,33 @@ build_runtime_graph_libs() {
 # carry a baked-in DT_RPATH back to /opt/sambaflow -- RPATH beats
 # LD_LIBRARY_PATH, so just adding our build to LD_LIBRARY_PATH is NOT enough
 # to make it win. libNovaRuntime dlopen()s the UNVERSIONED name
-# "libc_samba_runtime.so" (not the "libc_samba_runtime.so.4.13" this build
-# actually produces), so the fix is: copy the .4.13 file, patch its own
-# DT_SONAME to the unversioned name via patchelf, and force-load it via
-# LD_PRELOAD -- LD_PRELOAD's own explicit unversioned name then wins the
-# dlopen() regardless of RPATH.
+# "libc_samba_runtime.so", not the SOVERSION-suffixed file this build
+# actually produces (e.g. "libc_samba_runtime.so.4.13"), so the fix is: copy
+# the real versioned file, patch its own DT_SONAME to the unversioned name
+# via patchelf, and force-load it via LD_PRELOAD -- LD_PRELOAD's own explicit
+# unversioned name then wins the dlopen() regardless of RPATH.
+#
+# The versioned filename is resolved via the unversioned symlink
+# (build_runtime_graph_libs's `make install` always keeps it pointed at the
+# current SOVERSION) rather than hardcoded -- a hardcoded suffix silently
+# picks up a stale file left over from a previous build at a different
+# SOVERSION once SR_MAJOR/SR_MINOR bumps (confirmed 2026-07-14: a hardcoded
+# ".so.4.13" here kept grabbing an old 4.13 build after switching to a
+# software-repo branch that bumped to 4.14, silently dropping newly added
+# symbols like samba_get_host_va).
 build_preload_libs() {
     echo "=== Building LD_PRELOAD copies (SONAME-patched) $(date) ==="
     which patchelf >/dev/null 2>&1 || { echo "ERROR: patchelf not found (pip install --user patchelf, or dnf install patchelf)"; exit 1; }
     mkdir -p "$RUNTIME_INSTALL/preload"
     for base in libc_samba_runtime libcpp_samba_runtime; do
-        SRC="$RUNTIME_INSTALL/lib/${base}.so.4.13"
+        SYMLINK="$RUNTIME_INSTALL/lib/${base}.so"
+        [ -L "$SYMLINK" ] || { echo "ERROR: $SYMLINK not found (or not a symlink) — run build_runtime_graph_libs first"; exit 1; }
+        SRC="$RUNTIME_INSTALL/lib/$(readlink "$SYMLINK")"
         DST="$RUNTIME_INSTALL/preload/${base}.so"
-        [ -f "$SRC" ] || { echo "ERROR: $SRC not found — run build_runtime_graph_libs first"; exit 1; }
+        [ -f "$SRC" ] || { echo "ERROR: $SRC (resolved from $SYMLINK) not found — run build_runtime_graph_libs first"; exit 1; }
         cp -f "$SRC" "$DST"
         patchelf --set-soname "${base}.so" "$DST"
-        echo "  $DST: $(readelf -d "$DST" | grep SONAME)"
+        echo "  $DST: $(readelf -d "$DST" | grep SONAME) (resolved from $(basename "$SRC"))"
     done
 }
 

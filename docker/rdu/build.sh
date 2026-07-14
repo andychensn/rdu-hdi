@@ -69,6 +69,7 @@ sudo -g docker /usr/bin/docker-wrapper build \
     --build-arg FAST_COE_COMMIT="$FAST_COE_COMMIT" \
     --build-arg RDU_TRANSFORMERS_VERSION="$RDU_TRANSFORMERS_VERSION" \
     --build-arg BRCM_ROCE_USERLAND_VERSION="$BRCM_ROCE_USERLAND_VERSION" \
+    --build-arg COE_TARGET_RUNTIME_VERSION_OVERRIDE="$COE_TARGET_RUNTIME_VERSION_OVERRIDE" \
     -t "$FULL_IMAGE" \
     -f "$REPO_ROOT/docker/rdu/Dockerfile" \
     "$REPO_ROOT"
