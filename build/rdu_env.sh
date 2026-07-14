@@ -75,8 +75,8 @@ fetch_sources() {
             exit 1
         fi
     else
-        echo "  Cloning sambanova/fast-coe@$FAST_COE_COMMIT..."
-        git clone git@github.com:sambanova/fast-coe.git "$FAST_COE_SRC"
+        echo "  Cloning $FAST_COE_URL@$FAST_COE_COMMIT..."
+        git clone --branch "$FAST_COE_BRANCH" "$FAST_COE_URL" "$FAST_COE_SRC"
         git -C "$FAST_COE_SRC" checkout "$FAST_COE_COMMIT"
         echo "  fast-coe cloned + pinned ✅"
         for p in server/vllm-rdu/rdu_hardware/connector_override.py \

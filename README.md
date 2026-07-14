@@ -101,7 +101,7 @@ source config/cluster.env
 source config/model.env
 
 # 1. Fetch benchmark tooling
-git clone https://github.com/SemiAnalysisAI/InferenceX.git "$REPO/InferenceX"
+git clone --branch "$INFERENCEX_BRANCH" "$INFERENCEX_URL" "$REPO/InferenceX"
 git -C "$REPO/InferenceX" checkout "$INFERENCEX_COMMIT"
 
 # 2. Build GPU prefill Docker image (~20 min, login node, no GPU required)
@@ -250,10 +250,10 @@ RDU side (`build/rdu_env.sh`, `patches/rdu/`):
 |------|--------|---------|
 | [`open-source/ucx`](https://github.sambanovasystems.com/open-source/ucx) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | UCX 1.22 + SN RDMA patches (used by both GPU and RDU sides), staged by `docker/gpu/build.sh` / `build/rdu_env.sh` from `UCX_URL`/`UCX_BRANCH`/`UCX_COMMIT` (`config/versions.env`) |
 | [`open-source/nixl`](https://github.sambanovasystems.com/open-source/nixl) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | NIXL + SN UCX integration, same staging rule from `NIXL_URL`/`NIXL_BRANCH`/`NIXL_COMMIT` |
-| [`sambanova/fast-coe`](https://github.com/sambanova/fast-coe) | private, SSH key required | vllm-rdu connector/engine (`server/vllm-rdu`), pinned by commit in `config/versions.env` |
+| [`sambanova/fast-coe`](https://github.com/sambanova/fast-coe) | private, SSH key required | vllm-rdu connector/engine (`server/vllm-rdu`), pinned via `FAST_COE_URL`/`FAST_COE_BRANCH`/`FAST_COE_COMMIT` (`config/versions.env`) |
 | [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | private | Source of the GPU-side `REGISTER_CONSUMER_MSG` producer file |
-| [`SambaNova/software`](https://github.sambanovasystems.com/SambaNova/software) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | `coe_api`/`rdu_engine` + BAR2 runtime connector libs, self-built by `build/bar2.sh` from `SOFTWARE_REPO_COMMIT` (`config/versions.env`) |
-| [`SemiAnalysisAI/InferenceX`](https://github.com/SemiAnalysisAI/InferenceX) | public | Benchmark tool (`benchmark_serving.py`), pinned via `INFERENCEX_COMMIT` |
+| [`SambaNova/software`](https://github.sambanovasystems.com/SambaNova/software) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | `coe_api`/`rdu_engine` + BAR2 runtime connector libs, self-built by `build/bar2.sh` from `SOFTWARE_REPO_URL`/`SOFTWARE_REPO_BRANCH`/`SOFTWARE_REPO_COMMIT` (`config/versions.env`) |
+| [`SemiAnalysisAI/InferenceX`](https://github.com/SemiAnalysisAI/InferenceX) | public | Benchmark tool (`benchmark_serving.py`), pinned via `INFERENCEX_URL`/`INFERENCEX_BRANCH`/`INFERENCEX_COMMIT` |
 
 **Non-git external dependencies**, also pinned in `config/versions.env`:
 

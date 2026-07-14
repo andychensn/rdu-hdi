@@ -73,8 +73,8 @@ done
 # ── Clone InferenceX if not present ──────────────────────────────────────────
 INFERENCEX_DIR="$REPO_ROOT/InferenceX"
 if [ ! -d "$INFERENCEX_DIR" ]; then
-    echo "Cloning SemiAnalysisAI/InferenceX@$INFERENCEX_COMMIT..."
-    git clone https://github.com/SemiAnalysisAI/InferenceX.git "$INFERENCEX_DIR"
+    echo "Cloning $INFERENCEX_URL@$INFERENCEX_COMMIT..."
+    git clone --branch "$INFERENCEX_BRANCH" "$INFERENCEX_URL" "$INFERENCEX_DIR"
     git -C "$INFERENCEX_DIR" checkout "$INFERENCEX_COMMIT"
 fi
 
