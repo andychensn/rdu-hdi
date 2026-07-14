@@ -80,6 +80,10 @@ MAX_MODEL_LEN=196608
 
 - Login node access (`sc-vnc9` or equivalent) with `snrdu` on PATH
 - SSH key access to GitHub (for cloning the private `sambanova/fast-coe` repo)
+- SSH key access to `github.sambanovasystems.com` (internal GitHub Enterprise —
+  for cloning `open-source/ucx` and `open-source/nixl`, staged by
+  `docker/gpu/build.sh` / `build/rdu_env.sh` before either Docker or RDU
+  builds; a `docker build` alone can't reach this host, hence the staging)
 - `sudo -g docker` access on GPU nodes (for `cuda-docker-run-wrapper`)
 - GPU node reservation + RDU node reservation (see `config/cluster.env`)
 
@@ -244,8 +248,8 @@ RDU side (`build/rdu_env.sh`, `patches/rdu/`):
 
 | Repo | Access | Purpose |
 |------|--------|---------|
-| [`andychensn/ucx`](https://github.com/andychensn/ucx) | public | UCX 1.22 + SN RDMA patches (used by both GPU and RDU sides) |
-| [`andychensn/nixl`](https://github.com/andychensn/nixl) | public | NIXL + SN UCX integration |
+| [`open-source/ucx`](https://github.sambanovasystems.com/open-source/ucx) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | UCX 1.22 + SN RDMA patches (used by both GPU and RDU sides), staged by `docker/gpu/build.sh` / `build/rdu_env.sh` from `UCX_URL`/`UCX_BRANCH`/`UCX_COMMIT` (`config/versions.env`) |
+| [`open-source/nixl`](https://github.sambanovasystems.com/open-source/nixl) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | NIXL + SN UCX integration, same staging rule from `NIXL_URL`/`NIXL_BRANCH`/`NIXL_COMMIT` |
 | [`sambanova/fast-coe`](https://github.com/sambanova/fast-coe) | private, SSH key required | vllm-rdu connector/engine (`server/vllm-rdu`), pinned by commit in `config/versions.env` |
 | [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | private | Source of the GPU-side `REGISTER_CONSUMER_MSG` producer file |
 | [`SambaNova/software`](https://github.sambanovasystems.com/SambaNova/software) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | `coe_api`/`rdu_engine` + BAR2 runtime connector libs, self-built by `build/bar2.sh` from `SOFTWARE_REPO_COMMIT` (`config/versions.env`) |
@@ -282,8 +286,11 @@ entirely outside this repo's control, with no version pin or drift detection pos
   pinned to a git commit or package registry. If the file at `/import/it-tools/idc/fw/brcm/...` ever
   changes or moves, there's no automated way to detect it; the fallback is "contact IT."
 - **Access gates with no public fallback**: SSH key access to `github.com` (private `fast-coe`) and
-  `github.sambanovasystems.com` (private `software` repo) are both hard requirements — anyone without
-  both cannot reproduce the RDU-side build at all, only read this repo's own code.
+  `github.sambanovasystems.com` (private `software`, `open-source/ucx`, `open-source/nixl` repos)
+  are both hard requirements — anyone without both cannot reproduce the RDU-side build at all, only
+  read this repo's own code. `open-source/ucx`/`open-source/nixl` access also blocks the GPU-side
+  Docker build now (`docker/gpu/build.sh` stages both from the org's internal fork before
+  `docker build` even starts) — previously these were public forks with no auth needed at all.
 - **Cluster-specific topology** (`config/cluster.env`) — node names, RoCE IPs, and SLURM
   partition/QOS/reservation names are specific to this cluster's current allocation and need
   hand-editing on any other cluster (see "Configuration" above).
