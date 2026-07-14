@@ -94,6 +94,12 @@ COPY docker/rdu/install-deps.sh /build/install-deps.sh
 RUN chmod +x /build/install-deps.sh && \
     RDU_TRANSFORMERS_VERSION="${RDU_TRANSFORMERS_VERSION}" /build/install-deps.sh
 
+# See config/versions.env's COE_TARGET_RUNTIME_VERSION_OVERRIDE comment --
+# only affects this deployment's coe_api.initialize() call, not other
+# fast-coe consumers.
+ARG COE_TARGET_RUNTIME_VERSION_OVERRIDE
+ENV COE_TARGET_RUNTIME_VERSION_OVERRIDE="${COE_TARGET_RUNTIME_VERSION_OVERRIDE}"
+
 COPY docker/rdu/entrypoint.sh /opt/rdu-decode-entrypoint.sh
 RUN chmod +x /opt/rdu-decode-entrypoint.sh
 
