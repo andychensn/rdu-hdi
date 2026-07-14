@@ -56,9 +56,10 @@ if [[ "${1:-}" == "--inner" ]]; then
     LMCACHE_CHUNK_SIZE=$((BLOCK_SIZE * 4))
 
     # Optional local-disk tier (see config/model.env's LMCACHE_MAX_LOCAL_DISK_GB
-    # comment) -- off by default (0). Mounted under GPU_CACHE_ROOT (NFS,
-    # already auto-mounted into the container), so it survives a worker
-    # restart even though the CPU tier (pure in-process memory) does not.
+    # comment) -- on by default; set LMCACHE_MAX_LOCAL_DISK_GB=0 to disable.
+    # Mounted under GPU_CACHE_ROOT (NFS, already auto-mounted into the
+    # container), so it survives a worker restart even though the CPU tier
+    # (pure in-process memory) does not.
     # Scoped per worker index (LMCACHE_DISK_PATH, not a shared directory):
     # the on-disk cache key filename encodes only (model, world_size,
     # TP-rank, chunk_hash), which repeats identically across independent
