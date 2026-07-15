@@ -176,4 +176,4 @@ exec env \
         --compilation-config '{"mode": 0}' \
         --additional-config "$ADDITIONAL_CONFIG_JSON" \
         --trust-remote-code \
-        --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_buffer_device":"rdu","kv_connector_extra_config":{"rdu_mode":"real","rdu_ddr_cache_budget_gb":30,"backends":["UCX"],"enforce_handshake_compat":false}}'
+        --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_buffer_device":"rdu","kv_connector_extra_config":{"rdu_mode":"real","rdu_ddr_cache_budget_gb":30,"rdu_num_dp_groups":2,"backends":["UCX"],"enforce_handshake_compat":false}}'

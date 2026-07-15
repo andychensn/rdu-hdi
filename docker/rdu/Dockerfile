@@ -94,11 +94,16 @@ COPY docker/rdu/install-deps.sh /build/install-deps.sh
 RUN chmod +x /build/install-deps.sh && \
     RDU_TRANSFORMERS_VERSION="${RDU_TRANSFORMERS_VERSION}" /build/install-deps.sh
 
-# See config/versions.env's RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE
-# comment -- only affects this deployment's rdu_engine.initialize() call
+# See config/versions.env's RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE /
+# RDU_ENGINE_ALWAYS_LOAD_MEMCOPY_PEF / RDU_ENGINE_MEMCOPY_BUNDLE_PATH
+# comments -- only affect this deployment's rdu_engine.initialize() call
 # (rdu_executor/runtime.py), not other vllm-rdu consumers.
 ARG RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE
 ENV RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE="${RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE}"
+ARG RDU_ENGINE_ALWAYS_LOAD_MEMCOPY_PEF
+ENV RDU_ENGINE_ALWAYS_LOAD_MEMCOPY_PEF="${RDU_ENGINE_ALWAYS_LOAD_MEMCOPY_PEF}"
+ARG RDU_ENGINE_MEMCOPY_BUNDLE_PATH
+ENV RDU_ENGINE_MEMCOPY_BUNDLE_PATH="${RDU_ENGINE_MEMCOPY_BUNDLE_PATH}"
 
 COPY docker/rdu/entrypoint.sh /opt/rdu-decode-entrypoint.sh
 RUN chmod +x /opt/rdu-decode-entrypoint.sh

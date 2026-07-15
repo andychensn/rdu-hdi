@@ -18,6 +18,20 @@ pef_path: "/import/ml-sc-scratch4/jayr/minimax_m2__full_layers_tp16_ssss_cg_ss_m
 checkpoint_path: "/scratch/MiniMax-M2.7-FP8-RDU-packed"
 task: autoregressive
 
+# fast-coe's rdu_manifest.model_registry.Expert defaults `swappable=True`
+# (server/rdu_manifest/model_registry.py: `config.get('swappable', True)`)
+# and our fast-coe-legacy config never overrode it -- so fast-coe always ran
+# with the PEF's weights DDR-backed and swappable into HBM on demand.
+# vllm-rdu's own RduConfig defaults `swappable_pef=False`. Per rdu_engine.md
+# ("Set swappable=True to store weights in DDR and swap into HBM on demand
+# (required for layered allocation)"), swappable=True is what makes
+# rdu_engine set up its DDR/BAR2 layered-allocation bookkeeping at all --
+# without it, our separate KV-cache DDR prefix-cache feature's own BAR2
+# allocation (`ddr_tensor(bar2=True, ...)`) has nothing to allocate against.
+# Set explicitly here to match fast-coe's real behavior rather than rely on
+# vllm-rdu's differing default.
+swappable_pef: true
+
 # Renamed from fast-coe's `num_tokens_at_a_time` -- vllm-rdu's own
 # RduConfig.from_dict still accepts that old name (with a deprecation
 # warning) but we use the current name directly since this is a new config.
