@@ -147,7 +147,10 @@ Then launch, in order:
 source config/cluster.env
 bash launch/control_plane.sh &   # persistent; backgrounded
 
-# 2. GPU prefill (~10 min: model load + warmup)
+# 2. GPU prefill (~10 min: model load + warmup on a warm .gpu_cache/ --
+#    the very first launch on a given node is noticeably slower, ~5-6 min
+#    just for cold DeepGEMM kernel JIT warmup + torch.compile with no
+#    prior .gpu_cache/ contents; subsequent launches reuse that cache)
 bash launch/gpu_prefill.sh
 
 # 3. RDU decode — submits its own snrdu job (same self-dispatching shape as
