@@ -99,8 +99,10 @@ fi
 # clobbering any value the launch script explicitly passed via
 # --additional-config. This repo's RDU decode worker needs to *announce* a
 # different kv_cache_block_size than its real cache_config.block_size:
-# RDUPlatform (rdu_hardware/platform.py) force-sets cache_config.block_size=256
-# to match the RDU's real physical paging chunk, but Dynamo's PrefillRouter --
+# docker/rdu/entrypoint.sh passes --block-size 256, which vllm-rdu's
+# RDUPlatform (vllm_rdu/platform.py) validates (not force-sets, unlike
+# fast-coe's version) against the RDU's real physical paging chunk, but
+# Dynamo's PrefillRouter --
 # which validates GPU prefill's real 64-token KV-cache events against
 # whatever block size is registered for this model -- is built from decode's
 # registered card, so decode must announce 64 there without touching its

@@ -86,13 +86,18 @@ RDU_CONFIG="$MODEL_CONFIG"
 # whichever model card it happens to see with
 # ModelType.Chat/Completions -- i.e. this decode worker's card -- and uses that same
 # block size to validate every KV-cache-block event GPU prefill publishes (see
-# convert.rs's equality-drop guard). RDUPlatform (rdu_hardware/platform.py) force-
-# overrides vllm_config.cache_config.block_size to 256 tokens/block, matching the
-# RDU's real, hardware-mandated 64 KiB physical paging chunk (256 tokens is what
-# fits in one such chunk for this model) -- that value is correct and must not
-# change. But Dynamo's own dynamo_kv_event_block_size additional_config key lets us
-# report a *different* value to Dynamo's discovery/routing layer without touching
-# cache_config.block_size at all (components/src/dynamo/vllm/cache_info.py's
+# convert.rs's equality-drop guard). Unlike fast-coe's RDUPlatform (which
+# force-overrode vllm_config.cache_config.block_size regardless of any CLI
+# flag), vllm-rdu's RDUPlatform (vllm_rdu/platform.py) only VALIDATES
+# --block-size against the PEF's real page size -- it raises ValueError if
+# --block-size is missing/invalid rather than silently computing one. The
+# explicit --block-size 256 flag below (RDU's real, hardware-mandated 64 KiB
+# physical paging chunk -- 256 tokens is what fits in one such chunk for
+# this model) is therefore REQUIRED now, not just documentation of an
+# already-enforced value. But Dynamo's own dynamo_kv_event_block_size
+# additional_config key lets us report a *different* value to Dynamo's
+# discovery/routing layer without touching cache_config.block_size at all
+# (components/src/dynamo/vllm/cache_info.py's
 # get_configured_kv_event_block_size() reads this key before falling back to
 # cache_config.block_size). Safe here specifically because this worker runs with
 # --no-enable-prefix-caching below, so it never constructs a KV event publisher and has
@@ -165,6 +170,7 @@ exec env \
         --max-num-seqs 2 \
         --tensor-parallel-size 1 \
         --no-enable-prefix-caching \
+        --block-size 256 \
         --max-model-len "$MAX_MODEL_LEN" \
         --reasoning-parser minimax_m2_append_think \
         --compilation-config '{"mode": 0}' \
