@@ -28,7 +28,7 @@
 #   bash docker/rdu/build.sh
 ARG RHEL810_DEV_IMAGE
 
-FROM ${RHEL810_DEV_IMAGE} AS final
+FROM ${RHEL810_DEV_IMAGE} AS builder
 
 ARG BRCM_ROCE_USERLAND_VERSION
 
@@ -116,4 +116,53 @@ RUN chmod +x /opt/rdu-decode-entrypoint.sh
 
 RUN rm -rf /build/wheelhouse /build/patches
 
+# rhel810-dev (this image's base) carries at least one file (/etc/munge,
+# presumably from an mpich/munge package installed in a corporate-LDAP-
+# connected build environment) owned by a UID/GID far outside the 16-bit
+# range any rootless-Podman user namespace can represent -- confirmed
+# directly: `podman load` on a standalone (non-SLURM, rootless-Podman) VCC
+# node failed with "potentially insufficient UIDs or GIDs available in user
+# namespace (requested 1447850569:988 for /etc/munge)". munge itself is
+# unused here (this deployment never runs coe_api's multi-process/MPI
+# "coe-follower" mode -- confirmed earlier this only matters when
+# INSTALL_ROOT triggers that codepath, which it doesn't in our
+# single-process setup), so normalizing ownership is safe. Broad find+chown
+# (not just /etc/munge) in case another exotic-UID file exists elsewhere in
+# the base image.
+#
+# This alone does NOT fix the podman-load failure, though: chown here only
+# changes what the FINAL merged filesystem looks like -- it doesn't rewrite
+# the earlier layer (baked into rhel810-dev itself, confirmed: the failing
+# blob's hash was identical before and after adding this RUN line) that
+# actually carries the bad ownership. podman/OCI tooling extracts each
+# layer in sequence to build up the merged rootfs; a later layer's chown
+# can't prevent an earlier layer's own tar entries from failing to extract
+# in the first place under a rootless user namespace. Real fix is the
+# `final` flattening stage below -- kept anyway as defense in depth (and
+# because it's the only thing that fixes ownership if this image is ever
+# used unflattened, e.g. as a builder stage in something else).
+RUN find / -xdev -not -path '/proc/*' -not -path '/sys/*' -not -path '/dev/*' \( -uid +65535 -o -gid +65535 \) -exec chown 0:0 {} + 2>/dev/null || true
+
+# Flatten into a single layer. This is what actually fixes the podman-load
+# failure above: `COPY --from=builder / /` reads the FULLY MERGED
+# filesystem view of the builder stage (whatever chown just normalized it
+# to) and writes it as ONE NEW layer with no history of `builder`'s own
+# layer boundaries -- so the original bad-UID layer baked into rhel810-dev
+# is never part of this image's own layer history at all, and rootless
+# Podman never has to extract it. `FROM scratch` (not
+# `FROM ${RHEL810_DEV_IMAGE}` again) is required for this to work: staying
+# on the same base would just re-inherit its layers underneath the COPY,
+# reintroducing the exact problem. All runtime ENV/ARG/ENTRYPOINT below is
+# metadata, not filesystem content, so COPY doesn't carry it over --
+# re-declared explicitly, matching every ENV set anywhere above (must stay
+# in sync with this Dockerfile's builder stage if that ever changes).
+FROM scratch AS final
+COPY --from=builder / /
+ENV PATH=/opt/sambanova/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV PYTHONNOUSERSITE=1
+ENV UCX_MODULE_DIR=/opt/rdu-ucx/lib/ucx
+ENV INSTALL_ROOT=/opt/bar2-runtime
+ENV LD_LIBRARY_PATH=/opt/bar2-runtime/lib:/opt/sambanova/lib:/opt/rdu-ucx/lib
+ARG RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE
+ENV RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE="${RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE}"
 ENTRYPOINT ["/opt/rdu-decode-entrypoint.sh"]

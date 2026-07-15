@@ -48,12 +48,18 @@ if [[ "${1:-}" == "--inner" ]]; then
             cp -L "$src" "$GPU_DRIVER_LIBS_DIR/$(basename "$src")"
         done
         # Create the unversioned + .1 names the dynamic linker/torch look for,
-        # pointing at whatever exact versioned file we just copied.
+        # pointing at whatever exact versioned file we just copied. On some
+        # hosts ldconfig's SONAME entry already resolves straight to
+        # "$lib.1" (rather than a fully-versioned "$lib.575.51.03"), so
+        # $real's basename can equal the very name we're about to create --
+        # guard each symlink so it never targets itself and clobbers the
+        # real copied file.
         for lib in libcuda.so libnvidia-ml.so libnvidia-ptxjitcompiler.so; do
             real=$(find "$GPU_DRIVER_LIBS_DIR" -maxdepth 1 -name "${lib}.*" | sort -V | tail -1)
             [ -n "$real" ] || continue
-            ln -sf "$(basename "$real")" "$GPU_DRIVER_LIBS_DIR/${lib}.1"
-            ln -sf "$(basename "$real")" "$GPU_DRIVER_LIBS_DIR/${lib}"
+            real_name="$(basename "$real")"
+            [ "$real_name" = "${lib}.1" ] || ln -sf "$real_name" "$GPU_DRIVER_LIBS_DIR/${lib}.1"
+            [ "$real_name" = "${lib}" ] || ln -sf "$real_name" "$GPU_DRIVER_LIBS_DIR/${lib}"
         done
     fi
 
@@ -61,11 +67,21 @@ if [[ "${1:-}" == "--inner" ]]; then
     for dev in /dev/nvidia[0-9]* /dev/nvidiactl /dev/nvidia-uvm /dev/nvidia-uvm-tools; do
         [ -e "$dev" ] && GPU_DEVICE_FLAGS="$GPU_DEVICE_FLAGS --device $dev"
     done
+    # /dev/infiniband/* also contains by-ibdev/by-path (directories, not
+    # device nodes) -- podman's --device rejects a directory outright, so
+    # only pass actual character devices.
     RDMA_DEVICES=""
     for dev in /dev/infiniband/*; do
-        [ -e "$dev" ] && RDMA_DEVICES="$RDMA_DEVICES --device $dev"
+        [ -c "$dev" ] && RDMA_DEVICES="$RDMA_DEVICES --device $dev"
     done
 
+    # GPU_HOST is Blackwell (B200), which auto-selects vLLM's
+    # FLASHINFER_TRTLLM fp8 MoE kernel -- that kernel assumes DeepSeek-V3-
+    # style grouped MoE routing (n_group>0) and hard-crashes
+    # ("n_group should not be zero for DeepSeekV3 routing") on MiniMax M2's
+    # ungrouped router. vnc+idc's GPUs are pre-Blackwell, so this backend is
+    # never auto-selected there -- VCC-specific, not a vnc+idc regression.
+    # Disabling FlashInfer's fp8 MoE path falls back to DEEPGEMM/TRITON.
     echo "=== GPU prefill (VCC/Podman) on $(hostname) $(date) ==="
     echo "    image:      $GPU_IMAGE"
     echo "    RoCE IP:    $GPU_ROCE_IP"
@@ -75,7 +91,7 @@ if [[ "${1:-}" == "--inner" ]]; then
     # /import,/scratch into the container -- plain `podman run` here does
     # not, and --net=host only shares the network namespace. Mount
     # GPU_MODEL_PATH explicitly.
-    exec podman run --rm --net=host \
+    exec podman run --rm --replace --net=host \
         --name "vcc-gpu-prefill" \
         --entrypoint python3 \
         --security-opt label=disable \
@@ -87,6 +103,7 @@ if [[ "${1:-}" == "--inner" ]]; then
         -v "$GPU_MODEL_PATH:$GPU_MODEL_PATH:ro" \
         -e "LD_LIBRARY_PATH=$GPU_DRIVER_LIBS_DIR" \
         -e "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" \
+        -e "VLLM_USE_FLASHINFER_MOE_FP8=0" \
         -e "ETCD_ENDPOINTS=http://$CONTROL_PLANE_IP:$ETCD_PORT" \
         -e "NATS_SERVER=nats://$CONTROL_PLANE_IP:$NATS_PORT" \
         -e "VLLM_NIXL_SIDE_CHANNEL_HOST=$GPU_ROCE_IP" \

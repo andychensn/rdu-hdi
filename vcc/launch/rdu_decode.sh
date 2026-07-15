@@ -15,6 +15,24 @@
 #      file's own comment; this needs the image rebuilt once to pick up,
 #      it's a new entrypoint.sh env-var check, not yet in any already-built
 #      image tag).
+#   3. docker-run-wrapper (vnc+idc) auto-enables `--privileged` when the
+#      node's default route is on one of two specific lab subnets
+#      (10.103.8.1/10.30.8.1 -- see /usr/bin/docker-run-wrapper's
+#      PRIVILEGE_LEVEL logic) -- i.e. every vnc+idc RDU decode launch has
+#      ALWAYS run privileged, whether or not anyone realized the RDU kernel
+#      driver's host-memory-pinning ioctl (mem_rsc_alloc_host_region ->
+#      NUMA-preferred hugepage allocation for its DMA buffer) actually
+#      depends on it. Confirmed live on VCC: our narrower
+#      --device+--cap-add IPC_LOCK recipe (which is sufficient for simple
+#      device passthrough) reproducibly fails with "Could not get any
+#      region for NUMA node:3 .. Resource DB Alloc Failure" even though
+#      RDU_HOST's bare metal has hugepages properly reserved on every NUMA
+#      node (confirmed: 512x1GB pages across all 8 nodes) and
+#      /dev/hugepages is bind-mounted into the container -- the missing
+#      piece is privilege, not visibility. `--privileged` is the direct
+#      fix; kept alongside --security-opt label=disable/--cap-add IPC_LOCK
+#      since --privileged alone should already subsume both, but leaving
+#      them costs nothing and documents original intent.
 #
 # Usage: bash vcc/launch/rdu_decode.sh
 set -euo pipefail
@@ -40,13 +58,15 @@ if [[ "${1:-}" == "--inner" ]]; then
     # only shares the network namespace, not the filesystem. Every host path
     # the container needs to read must be bind-mounted explicitly.
     echo "=== starting RDU decode (VCC/Podman) on $(hostname) $(date) ==="
-    exec podman run --rm --net=host \
+    exec podman run --rm --replace --net=host \
         --name "vcc-rdu-decode" \
+        --privileged \
         --security-opt label=disable \
         --device /dev/rdu --device /dev/rdu_mem_map \
         $RDMA_DEVICES \
         --ulimit memlock=-1:-1 \
         --cap-add IPC_LOCK \
+        -v /dev/hugepages:/dev/hugepages \
         -v "$RDU_MODEL_PATH:$RDU_MODEL_PATH:ro" \
         -v "$(dirname "$RDU_PEF_PATH"):$(dirname "$RDU_PEF_PATH"):ro" \
         -v "$MODEL_CONFIG_PATH:$MODEL_CONFIG_PATH:ro" \

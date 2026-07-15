@@ -263,6 +263,22 @@ build_runtime_graph_libs() {
     fi
     cp -a build/graph/lib/. "$RUNTIME_INSTALL/lib/"
     echo "  copied $(ls build/graph/lib/ | wc -l) graph-group libs to $RUNTIME_INSTALL/lib/"
+
+    # `build.py -b graph` also produces build/kshim_intfc/lib/ alongside
+    # build/graph/lib/ -- libkshim_core.so/libkshim_log.so, the userspace
+    # kernel-driver shim libc_samba_runtime.so/libcpp_samba_runtime.so
+    # dynamically link against (confirmed via ldd; libkshim_plugin.so, the
+    # third kshim lib bare metal ships at /opt/sambaflow/runtime/kshim_intfc,
+    # is NOT a dependency of anything in this chain). Previously never
+    # copied here, which silently produced an image that fails at container
+    # startup with "error while loading shared libraries: libkshim_core.so:
+    # cannot open shared object file" the moment LD_PRELOAD tries to load
+    # libc_samba_runtime.so -- i.e. every RDU decode launch, not
+    # environment-specific.
+    [ -d build/kshim_intfc/lib ] || { echo "ERROR: build/kshim_intfc/lib not found -- expected alongside build/graph/lib"; exit 1; }
+    rm -rf "$RUNTIME_INSTALL/lib/libkshim_core.so" "$RUNTIME_INSTALL/lib/libkshim_log.so"
+    cp -a build/kshim_intfc/lib/libkshim_core.so build/kshim_intfc/lib/libkshim_log.so "$RUNTIME_INSTALL/lib/"
+    echo "  copied libkshim_core.so, libkshim_log.so to $RUNTIME_INSTALL/lib/"
     ls "$RUNTIME_INSTALL/lib/"
 }
 

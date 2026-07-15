@@ -7,7 +7,7 @@
 # no GPU/RDU device passthrough, no SELinux-label concern).
 #
 # Usage:
-#   bash vcc/launch/control_plane.sh          # launch (foreground; backgrounds itself: `&`)
+#   bash vcc/launch/control_plane.sh          # launch detached, returns once started
 #   bash vcc/launch/control_plane.sh --stop   # graceful SIGTERM to the running container
 set -euo pipefail
 
@@ -23,8 +23,15 @@ if [[ "${1:-}" == "--stop" ]]; then
 fi
 
 echo "Starting control plane on $CONTROL_PLANE_HOST (image: $CONTROL_PLANE_IMAGE)..."
+# -d (detached): a plain foreground `podman run` over a non-pty ssh session
+# dies the moment that ssh connection drops (idle timeout, network blip --
+# the same class of drop hit during VCC image transfers) -- confirmed live:
+# this exact thing silently killed a control-plane container hours into an
+# otherwise-idle run, with --rm erasing all trace of it. Detached, the
+# container is a podman-managed background process independent of the ssh
+# session that started it, matching "leave the endpoint live" intent.
 exec ssh -o BatchMode=yes "$CONTROL_PLANE_HOST" \
-    "podman run --net=host --rm \
+    "podman run -d --replace --net=host --rm \
         --name rdu-hdi-control-plane \
         -e CONTROL_PLANE_IP=$CONTROL_PLANE_IP -e ETCD_PORT=$ETCD_PORT \
         -e NATS_PORT=$NATS_PORT -e VLLM_PORT=$VLLM_PORT \
