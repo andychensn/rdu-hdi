@@ -21,7 +21,7 @@ wheelhouse/
 benchmark_results/
 
 # Runtime-only repos — cloned at setup time (see README.md)
-fast-coe/
+vllm-rdu/
 InferenceX/
 vendor/bin/
 rdu-build-src/

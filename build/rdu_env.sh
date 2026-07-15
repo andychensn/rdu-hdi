@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build the RDU-side artifacts rdu-hdi's Docker image needs: fast-coe
+# Build the RDU-side artifacts rdu-hdi's Docker image needs: vllm-rdu
 # source, UCX/NIXL (from source), and the vllm+cpu wheel.
 #
-# One script, not split across several — fetching fast-coe and building
+# One script, not split across several — fetching vllm-rdu and building
 # UCX/NIXL always run together in a fixed order, and splitting the "extra
 # deps" step into its own script previously caused it to be silently
 # forgotten before a launch.
@@ -21,7 +21,7 @@
 #       -- bash build/rdu_env.sh --build-only
 #
 # Outputs:
-#   $REPO_ROOT/fast-coe/          — vllm-rdu source, pinned by commit
+#   $REPO_ROOT/vllm-rdu/          — vllm-rdu source, pinned by commit
 #   $REPO_ROOT/rdu-ucx-install/   — UCX (CPU-only, bnxt_re verbs, no CUDA)
 #   $REPO_ROOT/wheelhouse/        — vllm+cpu, nixl, ai-dynamo(-runtime), and all
 #                                   transitive-dep wheels
@@ -41,7 +41,7 @@ SRC_DIR="$REPO_ROOT/rdu-build-src"
 UCX_INSTALL="$REPO_ROOT/rdu-ucx-install"
 WHEELHOUSE="$REPO_ROOT/wheelhouse"
 VLLM_SRC="$SRC_DIR/vllm-patched"
-FAST_COE_SRC="$REPO_ROOT/fast-coe"
+VLLM_RDU_SRC="$REPO_ROOT/vllm-rdu"
 NPROC=$(nproc 2>/dev/null || echo 4)
 PY=/opt/sambanova/bin/python3.11
 
@@ -59,31 +59,32 @@ fetch_sources() {
     echo "=== Phase 1: Fetching sources and wheels (login node, needs internet) ==="
     mkdir -p "$SRC_DIR" "$WHEELHOUSE"
 
-    # ── fast-coe (vllm-rdu source) ────────────────────────────────────────────
-    # server/vllm-rdu is the RDU decode connector/engine code
-    # (rdu_hardware/connector_override.py: 4 independent per-NIC NIXL agents,
-    # BAR2/DDR slab cache, cache-aware routing). This is a PYTHONPATH/
-    # editable-install source tree, not a wheel — read directly off NFS at
-    # build+run time, no separate build step needed.
-    if [ -d "$FAST_COE_SRC/.git" ]; then
-        CURRENT=$(git -C "$FAST_COE_SRC" rev-parse HEAD)
-        if [ "$CURRENT" = "$FAST_COE_COMMIT" ]; then
-            echo "  fast-coe already present at $FAST_COE_COMMIT ✅"
+    # ── vllm-rdu (RDU decode worker plugin) ───────────────────────────────────
+    # RDUWorker/RDUModelRunner/NixlConnector — vLLM's hardware-plugin RFC
+    # (vllm.platform_plugins entry point), self-contained (no PYTHONPATH-only
+    # sibling dirs the way fast-coe's server/rdu_manifest etc. needed). This
+    # is a real pip package (pyproject.toml/setup.py), installed editable by
+    # docker/rdu/install-deps.sh — not a wheel, read directly off this
+    # checkout at build+run time, no separate build step needed.
+    if [ -d "$VLLM_RDU_SRC/.git" ]; then
+        CURRENT=$(git -C "$VLLM_RDU_SRC" rev-parse HEAD)
+        if [ "$CURRENT" = "$VLLM_RDU_COMMIT" ]; then
+            echo "  vllm-rdu already present at $VLLM_RDU_COMMIT ✅"
         else
-            echo "ERROR: $FAST_COE_SRC exists but is at $CURRENT, expected $FAST_COE_COMMIT"
+            echo "ERROR: $VLLM_RDU_SRC exists but is at $CURRENT, expected $VLLM_RDU_COMMIT"
             echo "  Remove it and re-run to re-fetch, or checkout the pin manually."
             exit 1
         fi
     else
-        echo "  Cloning $FAST_COE_URL@$FAST_COE_COMMIT..."
-        git clone --branch "$FAST_COE_BRANCH" "$FAST_COE_URL" "$FAST_COE_SRC"
-        git -C "$FAST_COE_SRC" checkout "$FAST_COE_COMMIT"
-        echo "  fast-coe cloned + pinned ✅"
-        for p in server/vllm-rdu/rdu_hardware/connector_override.py \
-                 server/rdu_manifest \
-                 server/inference-router/client-py/inference_router \
-                 server/block_hash; do
-            if [ -e "$FAST_COE_SRC/$p" ]; then
+        echo "  Cloning $VLLM_RDU_URL@$VLLM_RDU_COMMIT..."
+        git clone --branch "$VLLM_RDU_BRANCH" "$VLLM_RDU_URL" "$VLLM_RDU_SRC"
+        git -C "$VLLM_RDU_SRC" checkout "$VLLM_RDU_COMMIT"
+        echo "  vllm-rdu cloned + pinned ✅"
+        for p in vllm_rdu/v1/worker/rdu_worker.py \
+                 vllm_rdu/v1/worker/rdu_model_runner.py \
+                 vllm_rdu/kv_connector/v1/rdu_nixl_connector.py \
+                 rdu_executor; do
+            if [ -e "$VLLM_RDU_SRC/$p" ]; then
                 echo "    OK: $p"
             else
                 echo "    WARNING: missing expected path: $p"
@@ -270,19 +271,6 @@ PYEOF
         echo "  regex wheel ✅"
     else
         echo "  regex wheel already present"
-    fi
-
-    # av (PyAV) — needed by fast-coe's rdu_manifest.vlm_pipeline (imported
-    # unconditionally at module load, even for text-only models). C-extension
-    # package (bundles ffmpeg libs), so must be a prebuilt wheel, not vendored
-    # source. Not in the SambaNova system Python.
-    if ! find "$WHEELHOUSE" -name "av-*.whl" 2>/dev/null | grep -q .; then
-        echo "  Downloading av..."
-        python3.12 -m pip download "av==12.3.0" --only-binary=:all: --no-deps \
-            --python-version 311 --platform manylinux_2_17_x86_64 --dest "$WHEELHOUSE" 2>&1 | tail -2
-        echo "  av wheel ✅"
-    else
-        echo "  av wheel already present"
     fi
 
     # numpy pinned wheel — system s339 may have newer numpy (2.x) compiled against
@@ -638,7 +626,7 @@ build_vllm_cpu_wheel() {
 build_on_rdu_node() {
     [ -x "$PY" ] || { echo "ERROR: $PY not found — must run on RDU node via snrdu"; exit 1; }
     [ -d "$SRC_DIR/ucx/.git" ] || { echo "ERROR: sources not fetched — run with --fetch-only from login node first"; exit 1; }
-    [ -d "$FAST_COE_SRC/.git" ] || { echo "ERROR: fast-coe not fetched — run with --fetch-only from login node first"; exit 1; }
+    [ -d "$VLLM_RDU_SRC/.git" ] || { echo "ERROR: vllm-rdu not fetched — run with --fetch-only from login node first"; exit 1; }
 
     build_ucx_nixl
     echo ""

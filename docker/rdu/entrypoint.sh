@@ -5,7 +5,10 @@
 #     build/rdu_env.sh / docker/rdu/install-deps.sh installs
 #     lives in its site-packages (no venv).
 #   - UCX is at a fixed path baked into the image (/opt/rdu-ucx).
-#   - fast-coe is at a fixed path baked into the image (/build/fast-coe).
+#   - sambanova/vllm-rdu is pip-installed (editable, from the pinned
+#     checkout baked into the image at build time) -- registers itself via
+#     vLLM's own hardware-plugin entry point (vllm.platform_plugins), no
+#     PYTHONPATH wiring needed here.
 #   - coe_api/rdu_engine (pip-installed) and the BAR2 runtime connector libs
 #     (/opt/bar2-runtime/{lib,preload}) are baked into the image at build
 #     time (self-built, see build/bar2.sh). Cluster topology
@@ -27,7 +30,6 @@ export PYTHONNOUSERSITE=1
 : "${MODEL_CONFIG:=}"
 : "${RDU_CACHE:=/tmp/rdu-cache}"
 
-FAST_COE_SRC=/build/fast-coe
 _UCX_LIB=/opt/rdu-ucx/lib
 _UCX_MOD=/opt/rdu-ucx/lib/ucx
 _BAR2_LIB=/opt/bar2-runtime/lib
@@ -78,7 +80,7 @@ RDU_CONFIG="$MODEL_CONFIG"
     echo "WARNING: MODEL_CONFIG=$RDU_CONFIG not found — running without model config"
     RDU_CONFIG=""
 }
-[ -n "$RDU_CONFIG" ] && echo "  rdu_config: $RDU_CONFIG (fast-coe schema, used as-is)"
+[ -n "$RDU_CONFIG" ] && echo "  rdu_config: $RDU_CONFIG (vllm-rdu's flat RduConfig schema, used as-is)"
 
 # Dynamo KV-router block-size fix: Dynamo's PrefillRouter is built from
 # whichever model card it happens to see with
@@ -153,7 +155,6 @@ exec env \
     HF_HOME="$RDU_CACHE/huggingface" \
     VLLM_CONFIG_ROOT="$RDU_CACHE/vllm_config" \
     TRANSFORMERS_CACHE="$RDU_CACHE/huggingface" \
-    PYTHONPATH="$FAST_COE_SRC:$FAST_COE_SRC/server/inference-router/client-py:$FAST_COE_SRC/server/block_hash:${PYTHONPATH:-}" \
     LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$_BAR2_LIB:${LD_LIBRARY_PATH:-}" \
     LD_PRELOAD="$_BAR2_PRELOAD/libc_samba_runtime.so:$_BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
     /opt/sambanova/bin/python3.11 -m dynamo.vllm \

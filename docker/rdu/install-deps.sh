@@ -13,14 +13,14 @@
 #     by docker/rdu/Dockerfile (rdu-runtime-install/{lib,preload}).
 #
 # Run inside the docker/rdu/Dockerfile build (working dir: repo root, with
-# wheelhouse/, rdu-ucx-install/, patches/rdu/, fast-coe/ all present).
+# wheelhouse/, rdu-ucx-install/, patches/rdu/, vllm-rdu/ all present).
 set -euo pipefail
 
 export PYTHONNOUSERSITE=1
 PY=/opt/sambanova/bin/python3.11
 PIP="$PY -m pip"
 WHEELHOUSE="/build/wheelhouse"
-FAST_COE_SRC="/build/fast-coe"
+VLLM_RDU_SRC="/build/vllm-rdu"
 SITE_PACKAGES=$("$PY" -c "import site; print(site.getsitepackages()[0])")
 
 install_whl() {
@@ -187,12 +187,9 @@ PYEOF
     echo "  nixl_connector.py: NIXL_ERR_NO_TELEMETRY false-failure patch applied"
 fi
 
-echo "=== vllm-rdu (fast-coe, editable install) ==="
-[ -d "$FAST_COE_SRC/server/vllm-rdu" ] || { echo "ERROR: $FAST_COE_SRC/server/vllm-rdu not found"; exit 1; }
-$PIP install -q -e "$FAST_COE_SRC/server/vllm-rdu"
-
-echo "=== av (fast-coe's rdu_manifest.vlm_pipeline, imported unconditionally) ==="
-install_whl "av-*.whl"
+echo "=== vllm-rdu (sambanova/vllm-rdu, editable install) ==="
+[ -d "$VLLM_RDU_SRC/vllm_rdu" ] || { echo "ERROR: $VLLM_RDU_SRC/vllm_rdu not found"; exit 1; }
+$PIP install -q -e "$VLLM_RDU_SRC"
 
 echo "=== coe_api/rdu_engine (self-built, from wheelhouse/) ==="
 RDU_ENGINE_WHL=$(find "$WHEELHOUSE" -name "sambanova_rdu_engine_api-*.whl" 2>/dev/null | head -1)
@@ -252,7 +249,6 @@ RDU_UCX_LIB="/opt/rdu-ucx/lib"
 $PY -c "import vllm; print(f'vllm: {vllm.__version__}')"
 $PY -c "import numpy; print(f'numpy: {numpy.__version__}')"
 LD_LIBRARY_PATH="$RDU_UCX_LIB:${LD_LIBRARY_PATH:-}" $PY -c "import nixl; print('nixl: OK')"
-$PY -c "import av; print(f'av: {av.__version__}')"
 $PY -c "from dynamo.vllm.main import main; print('dynamo.vllm.main: OK')"
 
 # coe_api/rdu_engine are baked in (self-built, not NFS-mounted) --
@@ -260,17 +256,32 @@ $PY -c "from dynamo.vllm.main import main; print('dynamo.vllm.main: OK')"
 # Dockerfile's own ENV instruction, so a plain import must succeed here,
 # not just at container runtime. RDUTensor.dtype confirms the pinned
 # software-repo commit (config/versions.env's SOFTWARE_REPO_*) has it.
+#
+# IMPORTANT: vllm-rdu's own repo bundles a MOCK rdu_engine package (a
+# "fake RDU device for testing", used so its CI can run without hardware)
+# under the same import name -- pip install -e (above) can install that
+# mock as a real editable package (confirmed: pyproject.toml's
+# packages.find tries to exclude it, but setup.py's explicit
+# find_packages() call wins and discovers it anyway). Our own compiled
+# wheel is installed with --force-reinstall AFTER the editable install, so
+# it should win, but this has NOT been proven live yet -- the __file__
+# check below is the load-bearing assertion that catches it if the mock
+# wins instead.
 $PY -c "
 import rdu_engine
+assert 'vllm-rdu' not in rdu_engine.__file__, (
+    f'rdu_engine resolved to vllm-rdu\'s own mock package at {rdu_engine.__file__} '
+    '-- our real compiled wheel did not win the import.'
+)
 assert hasattr(rdu_engine, 'Checkpoint'), 'rdu_engine.Checkpoint missing'
 assert hasattr(rdu_engine, 'PEF'), 'rdu_engine.PEF missing'
 assert hasattr(rdu_engine.RDUTensor, 'dtype'), 'RDUTensor.dtype missing -- check config/versions.env SOFTWARE_REPO_COMMIT'
 import coe_api
 assert hasattr(coe_api.RDUTensor, 'dtype'), 'coe_api.RDUTensor.dtype missing'
-print('rdu_engine/coe_api: OK (RDUTensor.dtype present)')
+print(f'rdu_engine: OK (real module at {rdu_engine.__file__}, RDUTensor.dtype present)')
+print('coe_api: OK (RDUTensor.dtype present)')
 "
-PYTHONPATH="$FAST_COE_SRC:$FAST_COE_SRC/server/inference-router/client-py:$FAST_COE_SRC/server/block_hash:${PYTHONPATH:-}" \
-    $PY -c "from rdu_hardware.worker import *; print('rdu_hardware.worker: OK')"
+$PY -c "from vllm_rdu.v1.worker.rdu_worker import RDUWorker; print('vllm_rdu.v1.worker.rdu_worker: OK')"
 
 echo ""
 echo "=== RDU decode image dependency install COMPLETE $(date) ==="

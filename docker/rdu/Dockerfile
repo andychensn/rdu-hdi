@@ -1,7 +1,7 @@
 # RDU decode image for rdu-hdi disaggregated inference.
 #
 # Bakes in: /opt/sambanova's Python 3.11 + torch==2.2.0+sn (from the base
-# image), vllm+cpu + ai-dynamo + fast-coe's vllm-rdu + UCX/NIXL (COPIED as
+# image), vllm+cpu + ai-dynamo + sambanova/vllm-rdu + UCX/NIXL (COPIED as
 # pre-built binary artifacts from wheelhouse/ and rdu-ucx-install/), AND
 # coe_api/rdu_engine + the BAR2 runtime connector libs (self-built, see
 # build/bar2.sh) from wheelhouse/ and rdu-runtime-install/{lib,preload}.
@@ -80,25 +80,25 @@ COPY rdu-runtime-install/preload/ /opt/bar2-runtime/preload/
 # already carry -- a container starts clean, so it must be added explicitly.
 ENV LD_LIBRARY_PATH=/opt/bar2-runtime/lib:/opt/sambanova/lib:${LD_LIBRARY_PATH:-}
 
-# ── Python deps (vllm+cpu, ai-dynamo, fast-coe's vllm-rdu, NIXL, patches) ──
+# ── Python deps (vllm+cpu, ai-dynamo, sambanova/vllm-rdu, NIXL, patches) ──
 COPY wheelhouse/ /build/wheelhouse/
 COPY patches/rdu/ /build/patches/rdu/
-# .dockerignore excludes fast-coe/.git/ from the build context entirely
+# .dockerignore excludes vllm-rdu/.git/ from the build context entirely
 # (keeps the context small) — docker/rdu/build.sh verifies the
-# checkout is at the pinned FAST_COE_COMMIT on the login node, before this
+# checkout is at the pinned VLLM_RDU_COMMIT on the login node, before this
 # COPY, since the commit can't be checked here without the .git directory.
-COPY fast-coe/ /build/fast-coe/
+COPY vllm-rdu/ /build/vllm-rdu/
 
 ARG RDU_TRANSFORMERS_VERSION
 COPY docker/rdu/install-deps.sh /build/install-deps.sh
 RUN chmod +x /build/install-deps.sh && \
     RDU_TRANSFORMERS_VERSION="${RDU_TRANSFORMERS_VERSION}" /build/install-deps.sh
 
-# See config/versions.env's COE_TARGET_RUNTIME_VERSION_OVERRIDE comment --
-# only affects this deployment's coe_api.initialize() call, not other
-# fast-coe consumers.
-ARG COE_TARGET_RUNTIME_VERSION_OVERRIDE
-ENV COE_TARGET_RUNTIME_VERSION_OVERRIDE="${COE_TARGET_RUNTIME_VERSION_OVERRIDE}"
+# See config/versions.env's RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE
+# comment -- only affects this deployment's rdu_engine.initialize() call
+# (rdu_executor/runtime.py), not other vllm-rdu consumers.
+ARG RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE
+ENV RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE="${RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE}"
 
 COPY docker/rdu/entrypoint.sh /opt/rdu-decode-entrypoint.sh
 RUN chmod +x /opt/rdu-decode-entrypoint.sh

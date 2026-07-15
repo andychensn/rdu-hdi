@@ -32,9 +32,10 @@ the RDU decode worker on one merged timeline, including RDU's rich internal inst
 internals — tens of thousands of events per request, not just the five coarse request-lifecycle
 phases).
 
-**Requires the companion `fast-coe` change** (RDUWorker's standalone profiling control server —
-see `andyc/cluster-profiling-infra` there, or its PR). Without it, only the GPU-side trace is
-available; the steps below just skip the RDU parts.
+**Requires the companion `vllm-rdu` change** (RDUWorker's standalone profiling control server —
+see `andyc/hdi-integration` there, or its PR; ported from fast-coe's
+`andyc/cluster-profiling-infra` as part of the fast-coe → vllm-rdu migration). Without it, only
+the GPU-side trace is available; the steps below just skip the RDU parts.
 
 ### 1. (Recommended) Warm up before profiling
 

@@ -1,0 +1,41 @@
+# RDU configuration for MiniMax-M2.7 FP8 on SN40L -- vllm-rdu's flat
+# RduConfig schema (rdu_executor/config.py's RduConfig.from_dict), NOT
+# fast-coe's rdu_manifest.model_registry.Expert schema (see
+# config/minimax_m2.yaml, kept for reference / rollback during the
+# fast-coe -> vllm-rdu migration).
+#
+# Same PEF, same checkpoint, same dynamic-dims config as config/minimax_m2.yaml
+# -- this is a schema translation, not a config change. Our deployment only
+# ever uses one PEF/checkpoint/batch-size variant (no multi-expert routing,
+# LoRA, or checkpoint sharing across PEFs), which is exactly what this flat,
+# single-Task schema covers. `bs: [2, 2, 1]` is a degenerate Range
+# (min=max=2) expressing the same fixed batch_size=2 as the old schema's
+# `batch_size: 2` -- our config doesn't use vllm-rdu's dynamic-batch-size
+# path (is_dynamic_bs stays unset/false).
+task_name: MiniMax-M2.7
+pef_path: "/import/ml-sc-scratch4/jayr/minimax_m2__full_layers_tp16_ssss_cg_ss_max_ss_tg_parallel_sdk_fp8_per_tensor/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608.pef"
+checkpoint_path: "/scratch/MiniMax-M2.7-FP8-RDU-packed"
+task: autoregressive
+
+# Renamed from fast-coe's `num_tokens_at_a_time` -- vllm-rdu's own
+# RduConfig.from_dict still accepts that old name (with a deprecation
+# warning) but we use the current name directly since this is a new config.
+num_decode_cycles: 20
+
+dynamic_tensor: true
+is_dynamic_prefill: true
+
+bs: [2, 2, 1]
+
+prefill_dim_name: SS_CG
+prefill: [4096, 196608, 4096]
+prefill_set_at: runtime
+
+decode_dim_name: SS_TG
+decode: [4096, 196608, 4096]
+decode_set_at: runtime
+
+kv_dim_name: SS_MAX
+kv: [4096, 196608, 4096]
+kv_default: 196608
+kv_set_at: load

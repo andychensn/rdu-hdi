@@ -206,6 +206,11 @@ if [[ "${1:-}" == "--inner" ]]; then
         fi
     fi
 
+    # UCX_NET_DEVICES/UCX_MAX_RNDV_RAILS below: 4-NIC multi-rail (was
+    # single-NIC bnxt_re0 only) -- RDU decode already runs multi-rail
+    # (docker/rdu/entrypoint.sh's SN_MULTI_AGENT_NICS), GPU prefill didn't.
+    # Carried over from jayr's vllm_serve_prefill_rdma.sh (sambanova/vllm-rdu,
+    # josephp/scale_out_worker_processes branch) per direct instruction.
     exec "${NUMACTL_PREFIX[@]}" sudo -g docker /usr/bin/cuda-docker-run-wrapper \
         --pull=always \
         --net=host --rm \
@@ -222,7 +227,8 @@ if [[ "${1:-}" == "--inner" ]]; then
         --shm-size=1g \
         -e "UCX_MODULE_DIR=/opt/ucx/lib/ucx" \
         -e "UCX_TLS=rc,cuda_copy,cuda_ipc" \
-        -e "UCX_NET_DEVICES=bnxt_re0:1" \
+        -e "UCX_NET_DEVICES=bnxt_re0:1,bnxt_re2:1,bnxt_re4:1,bnxt_re6:1" \
+        -e "UCX_MAX_RNDV_RAILS=4" \
         -e "UCX_IB_ROCE_REACHABILITY_MODE=all" \
         -e "LMCACHE_LOCAL_CPU=True" \
         -e "LMCACHE_MAX_LOCAL_CPU_SIZE=$LMCACHE_MAX_LOCAL_CPU_GB" \
