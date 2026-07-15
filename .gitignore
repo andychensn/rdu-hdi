@@ -21,8 +21,11 @@ wheelhouse/
 benchmark_results/
 
 # Runtime-only repos — cloned at setup time (see README.md)
-fast-coe/
+vllm-rdu/
 InferenceX/
+# Reference-only checkout, kept around for comparison during the fast-coe ->
+# vllm-rdu migration; not a build dependency.
+fast-coe/
 vendor/bin/
 rdu-build-src/
 bar2-build-src/

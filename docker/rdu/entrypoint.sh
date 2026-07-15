@@ -5,7 +5,10 @@
 #     build/rdu_env.sh / docker/rdu/install-deps.sh installs
 #     lives in its site-packages (no venv).
 #   - UCX is at a fixed path baked into the image (/opt/rdu-ucx).
-#   - fast-coe is at a fixed path baked into the image (/build/fast-coe).
+#   - sambanova/vllm-rdu is pip-installed (editable, from the pinned
+#     checkout baked into the image at build time) -- registers itself via
+#     vLLM's own hardware-plugin entry point (vllm.platform_plugins), no
+#     PYTHONPATH wiring needed here.
 #   - coe_api/rdu_engine (pip-installed) and the BAR2 runtime connector libs
 #     (/opt/bar2-runtime/{lib,preload}) are baked into the image at build
 #     time (self-built, see build/bar2.sh). Cluster topology
@@ -27,7 +30,6 @@ export PYTHONNOUSERSITE=1
 : "${MODEL_CONFIG:=}"
 : "${RDU_CACHE:=/tmp/rdu-cache}"
 
-FAST_COE_SRC=/build/fast-coe
 _UCX_LIB=/opt/rdu-ucx/lib
 _UCX_MOD=/opt/rdu-ucx/lib/ucx
 _BAR2_LIB=/opt/bar2-runtime/lib
@@ -78,19 +80,24 @@ RDU_CONFIG="$MODEL_CONFIG"
     echo "WARNING: MODEL_CONFIG=$RDU_CONFIG not found — running without model config"
     RDU_CONFIG=""
 }
-[ -n "$RDU_CONFIG" ] && echo "  rdu_config: $RDU_CONFIG (fast-coe schema, used as-is)"
+[ -n "$RDU_CONFIG" ] && echo "  rdu_config: $RDU_CONFIG (vllm-rdu's flat RduConfig schema, used as-is)"
 
 # Dynamo KV-router block-size fix: Dynamo's PrefillRouter is built from
 # whichever model card it happens to see with
 # ModelType.Chat/Completions -- i.e. this decode worker's card -- and uses that same
 # block size to validate every KV-cache-block event GPU prefill publishes (see
-# convert.rs's equality-drop guard). RDUPlatform (rdu_hardware/platform.py) force-
-# overrides vllm_config.cache_config.block_size to 256 tokens/block, matching the
-# RDU's real, hardware-mandated 64 KiB physical paging chunk (256 tokens is what
-# fits in one such chunk for this model) -- that value is correct and must not
-# change. But Dynamo's own dynamo_kv_event_block_size additional_config key lets us
-# report a *different* value to Dynamo's discovery/routing layer without touching
-# cache_config.block_size at all (components/src/dynamo/vllm/cache_info.py's
+# convert.rs's equality-drop guard). Unlike fast-coe's RDUPlatform (which
+# force-overrode vllm_config.cache_config.block_size regardless of any CLI
+# flag), vllm-rdu's RDUPlatform (vllm_rdu/platform.py) only VALIDATES
+# --block-size against the PEF's real page size -- it raises ValueError if
+# --block-size is missing/invalid rather than silently computing one. The
+# explicit --block-size 256 flag below (RDU's real, hardware-mandated 64 KiB
+# physical paging chunk -- 256 tokens is what fits in one such chunk for
+# this model) is therefore REQUIRED now, not just documentation of an
+# already-enforced value. But Dynamo's own dynamo_kv_event_block_size
+# additional_config key lets us report a *different* value to Dynamo's
+# discovery/routing layer without touching cache_config.block_size at all
+# (components/src/dynamo/vllm/cache_info.py's
 # get_configured_kv_event_block_size() reads this key before falling back to
 # cache_config.block_size). Safe here specifically because this worker runs with
 # --no-enable-prefix-caching below, so it never constructs a KV event publisher and has
@@ -153,7 +160,6 @@ exec env \
     HF_HOME="$RDU_CACHE/huggingface" \
     VLLM_CONFIG_ROOT="$RDU_CACHE/vllm_config" \
     TRANSFORMERS_CACHE="$RDU_CACHE/huggingface" \
-    PYTHONPATH="$FAST_COE_SRC:$FAST_COE_SRC/server/inference-router/client-py:$FAST_COE_SRC/server/block_hash:${PYTHONPATH:-}" \
     LD_LIBRARY_PATH="$_UCX_LIB:$_NIXL_LIB:$_BAR2_LIB:${LD_LIBRARY_PATH:-}" \
     LD_PRELOAD="$_BAR2_PRELOAD/libc_samba_runtime.so:$_BAR2_PRELOAD/libcpp_samba_runtime.so${LD_PRELOAD:+:$LD_PRELOAD}" \
     /opt/sambanova/bin/python3.11 -m dynamo.vllm \
@@ -164,9 +170,10 @@ exec env \
         --max-num-seqs 2 \
         --tensor-parallel-size 1 \
         --no-enable-prefix-caching \
+        --block-size 256 \
         --max-model-len "$MAX_MODEL_LEN" \
         --reasoning-parser minimax_m2_append_think \
         --compilation-config '{"mode": 0}' \
         --additional-config "$ADDITIONAL_CONFIG_JSON" \
         --trust-remote-code \
-        --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_buffer_device":"rdu","kv_connector_extra_config":{"rdu_mode":"real","rdu_ddr_cache_budget_gb":30,"backends":["UCX"],"enforce_handshake_compat":false}}'
+        --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_buffer_device":"rdu","kv_connector_extra_config":{"rdu_mode":"real","rdu_ddr_cache_budget_gb":30,"rdu_num_dp_groups":2,"backends":["UCX"],"enforce_handshake_compat":false}}'

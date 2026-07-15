@@ -11,7 +11,7 @@ SN40L RDU handles decode, coordinated by NVIDIA Dynamo.
 flowchart LR
     CP["Control plane (Docker)<br/>etcd + NATS + dynamo.frontend<br/>login node"]
     GPU["GPU prefill worker (Docker)<br/>vllm/vllm-openai + UCX/NIXL<br/>+ vllm nixl_connector patch<br/>+ ai-dynamo"]
-    RDU["RDU decode worker (Docker)<br/>fast-coe vllm-rdu + UCX/NIXL<br/>+ coe_api/rdu_engine + BAR2 runtime<br/>+ ai-dynamo"]
+    RDU["RDU decode worker (Docker)<br/>sambanova/vllm-rdu + UCX/NIXL<br/>+ coe_api/rdu_engine + BAR2 runtime<br/>+ ai-dynamo"]
 
     CP <-->|discovery / routing| GPU
     CP <-->|discovery / routing| RDU
@@ -34,7 +34,7 @@ All external dependencies are pinned to exact commit SHAs in `config/versions.en
 
 | Script | Purpose |
 |--------|---------|
-| `build/rdu_env.sh` | Fetch/build fast-coe, UCX, NIXL, and the vllm+cpu wheel (RDU side) |
+| `build/rdu_env.sh` | Fetch/build vllm-rdu, UCX, NIXL, and the vllm+cpu wheel (RDU side) |
 | `build/bar2.sh` | Self-build coe_api/rdu_engine + the BAR2 runtime connector libs |
 | `docker/gpu/build.sh` | Build + push the GPU prefill Docker image |
 | `docker/control-plane/build.sh` | Build + push the control-plane Docker image |
@@ -79,7 +79,7 @@ MAX_MODEL_LEN=196608
 ## Prerequisites
 
 - Login node access (`sc-vnc9` or equivalent) with `snrdu` on PATH
-- SSH key access to GitHub (for cloning the private `sambanova/fast-coe` repo)
+- SSH key access to GitHub (for cloning the private `sambanova/vllm-rdu` repo)
 - SSH key access to `github.sambanovasystems.com` (internal GitHub Enterprise —
   for cloning `open-source/ucx` and `open-source/nixl`, staged by
   `docker/gpu/build.sh` / `build/rdu_env.sh` before either Docker or RDU
@@ -107,7 +107,7 @@ git -C "$REPO/InferenceX" checkout "$INFERENCEX_COMMIT"
 # 2. Build GPU prefill Docker image (~20 min, login node, no GPU required)
 bash docker/gpu/build.sh
 
-# 3. Fetch fast-coe source and build UCX/NIXL + the +cpu vllm wheel from
+# 3. Fetch vllm-rdu source and build UCX/NIXL + the +cpu vllm wheel from
 #    source — all in one script, two phases (login node needs internet;
 #    RDU-node build takes ~5 min total).
 bash build/rdu_env.sh --fetch-only
@@ -147,7 +147,10 @@ Then launch, in order:
 source config/cluster.env
 bash launch/control_plane.sh &   # persistent; backgrounded
 
-# 2. GPU prefill (~10 min: model load + warmup)
+# 2. GPU prefill (~10 min: model load + warmup on a warm .gpu_cache/ --
+#    the very first launch on a given node is noticeably slower, ~5-6 min
+#    just for cold DeepGEMM kernel JIT warmup + torch.compile with no
+#    prior .gpu_cache/ contents; subsequent launches reuse that cache)
 bash launch/gpu_prefill.sh
 
 # 3. RDU decode — submits its own snrdu job (same self-dispatching shape as
@@ -216,10 +219,10 @@ The only genuinely external assets this stack reads from a network filesystem at
 
 1. **The model checkpoint** — split across two paths for the two sides: `MODEL` (`config/model.env`,
    `/import/...`) is read by GPU prefill and by RDU decode's tokenizer/config path (RDU loads
-   weights with `--load-format dummy`, it doesn't read tensor data from here); `MINI_CKPT_FP8`
+   weights with `--load-format dummy`, it doesn't read tensor data from here); `checkpoint_path`
    (`config/minimax_m2.yaml`, `/scratch/...`) is the actual weight source the RDU engine loads.
 2. **The PEF** — `PEF` (`config/model.env`, `/import/...`) and the identical path embedded as
-   `MINI_PEF_FP8` in `config/minimax_m2.yaml`.
+   `pef_path` in `config/minimax_m2.yaml`.
 3. **`BRCM_ROCELIB`** (`/import/it-tools/idc/fw/brcm/237/bcm_237.1.148.0a/drivers_linux/bnxt_rocelib`)
    — build-time only, staged into the build context and `COPY`'d into `docker/gpu/Dockerfile`; never
    referenced at container runtime.
@@ -250,7 +253,7 @@ RDU side (`build/rdu_env.sh`, `patches/rdu/`):
 |------|--------|---------|
 | [`open-source/ucx`](https://github.sambanovasystems.com/open-source/ucx) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | UCX 1.22 + SN RDMA patches (used by both GPU and RDU sides), staged by `docker/gpu/build.sh` / `build/rdu_env.sh` from `UCX_URL`/`UCX_BRANCH`/`UCX_COMMIT` (`config/versions.env`) |
 | [`open-source/nixl`](https://github.sambanovasystems.com/open-source/nixl) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | NIXL + SN UCX integration, same staging rule from `NIXL_URL`/`NIXL_BRANCH`/`NIXL_COMMIT` |
-| [`sambanova/fast-coe`](https://github.com/sambanova/fast-coe) | private, SSH key required | vllm-rdu connector/engine (`server/vllm-rdu`), pinned via `FAST_COE_URL`/`FAST_COE_BRANCH`/`FAST_COE_COMMIT` (`config/versions.env`) |
+| [`sambanova/vllm-rdu`](https://github.com/sambanova/vllm-rdu) | private, SSH key required | RDU decode worker (`RDUWorker`/`RDUModelRunner`/`NixlConnector`, vLLM hardware-plugin RFC), pinned via `VLLM_RDU_URL`/`VLLM_RDU_BRANCH`/`VLLM_RDU_COMMIT` (`config/versions.env`) — replaces `sambanova/fast-coe` as of this pin |
 | [`sambanova/sn_vllm`](https://github.com/sambanova/sn_vllm) | private | Source of the GPU-side `REGISTER_CONSUMER_MSG` producer file |
 | [`SambaNova/software`](https://github.sambanovasystems.com/SambaNova/software) | private, internal GitHub Enterprise (`github.sambanovasystems.com`) | `coe_api`/`rdu_engine` + BAR2 runtime connector libs, self-built by `build/bar2.sh` from `SOFTWARE_REPO_URL`/`SOFTWARE_REPO_BRANCH`/`SOFTWARE_REPO_COMMIT` (`config/versions.env`) |
 | [`SemiAnalysisAI/InferenceX`](https://github.com/SemiAnalysisAI/InferenceX) | public | Benchmark tool (`benchmark_serving.py`), pinned via `INFERENCEX_URL`/`INFERENCEX_BRANCH`/`INFERENCEX_COMMIT` |
@@ -273,7 +276,7 @@ entirely outside this repo's control, with no version pin or drift detection pos
   model topology (MiniMax-M2.7, TP16, specific dynamic-dims ranges). Produced by a separate PEF
   compilation pipeline this repo has no part of; swapping models requires someone to already have a
   working PEF for it.
-- **The FP8 checkpoint** (`MINI_CKPT_FP8` in `config/minimax_m2.yaml`) — SambaNova's packed/quantized
+- **The FP8 checkpoint** (`checkpoint_path` in `config/minimax_m2.yaml`) — SambaNova's packed/quantized
   weight format, produced by a separate conversion pipeline, not built or versioned here.
 - **The PEF and checkpoint paths are personal scratch space**, not a shared or versioned location
   (`PEF` sits under `/import/ml-sc-scratch4/jayr/...`). If that engineer's scratch space is ever
@@ -285,7 +288,7 @@ entirely outside this repo's control, with no version pin or drift detection pos
 - **`BRCM_ROCELIB`'s tarball** (Broadcom's OOT `libbnxt_re` source, GPU side) — IT-distributed, not
   pinned to a git commit or package registry. If the file at `/import/it-tools/idc/fw/brcm/...` ever
   changes or moves, there's no automated way to detect it; the fallback is "contact IT."
-- **Access gates with no public fallback**: SSH key access to `github.com` (private `fast-coe`) and
+- **Access gates with no public fallback**: SSH key access to `github.com` (private `vllm-rdu`) and
   `github.sambanovasystems.com` (private `software`, `open-source/ucx`, `open-source/nixl` repos)
   are both hard requirements — anyone without both cannot reproduce the RDU-side build at all, only
   read this repo's own code. `open-source/ucx`/`open-source/nixl` access also blocks the GPU-side

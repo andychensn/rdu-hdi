@@ -39,22 +39,22 @@ done
 
 [ -d "$REPO_ROOT/rdu-ucx-install/lib" ] || { echo "ERROR: rdu-ucx-install/ not found — run build/rdu_env.sh first"; exit 1; }
 [ -n "$(find "$REPO_ROOT/wheelhouse" -name 'vllm-*+cpu-cp311*.whl' 2>/dev/null)" ] || { echo "ERROR: no vllm +cpu wheel in wheelhouse/ — run build/rdu_env.sh first"; exit 1; }
-[ -d "$REPO_ROOT/fast-coe/server/vllm-rdu" ] || { echo "ERROR: fast-coe/ not found — run build/rdu_env.sh --fetch-only first"; exit 1; }
+[ -d "$REPO_ROOT/vllm-rdu/vllm_rdu" ] || { echo "ERROR: vllm-rdu/ not found — run build/rdu_env.sh --fetch-only first"; exit 1; }
 [ -n "$(find "$REPO_ROOT/wheelhouse" -name 'sambanova_rdu_engine_api-*.whl' 2>/dev/null)" ] || { echo "ERROR: no sambanova_rdu_engine_api wheel in wheelhouse/ — run build/bar2.sh first"; exit 1; }
 [ -n "$(find "$REPO_ROOT/wheelhouse" -name 'sambanova_coe_api-*.whl' 2>/dev/null)" ] || { echo "ERROR: no sambanova_coe_api wheel in wheelhouse/ — run build/bar2.sh first"; exit 1; }
 [ -n "$(ls -A "$REPO_ROOT/rdu-runtime-install/lib" 2>/dev/null)" ] || { echo "ERROR: rdu-runtime-install/lib/ empty or missing — run build/bar2.sh first"; exit 1; }
 [ -n "$(ls -A "$REPO_ROOT/rdu-runtime-install/preload" 2>/dev/null)" ] || { echo "ERROR: rdu-runtime-install/preload/ empty or missing — run build/bar2.sh first"; exit 1; }
-# .dockerignore excludes fast-coe/.git/ from the Docker build context (keeps
+# .dockerignore excludes vllm-rdu/.git/ from the Docker build context (keeps
 # it small), so the pinned-commit check has to happen here instead of inside
 # the Dockerfile.
-FAST_COE_ACTUAL=$(git -C "$REPO_ROOT/fast-coe" rev-parse HEAD)
-[ "$FAST_COE_ACTUAL" = "$FAST_COE_COMMIT" ] || { echo "ERROR: fast-coe/ is at $FAST_COE_ACTUAL, expected $FAST_COE_COMMIT (config/versions.env)"; exit 1; }
+VLLM_RDU_ACTUAL=$(git -C "$REPO_ROOT/vllm-rdu" rev-parse HEAD)
+[ "$VLLM_RDU_ACTUAL" = "$VLLM_RDU_COMMIT" ] || { echo "ERROR: vllm-rdu/ is at $VLLM_RDU_ACTUAL, expected $VLLM_RDU_COMMIT (config/versions.env)"; exit 1; }
 
 FULL_IMAGE="$REGISTRY/$IMAGE_NAME:${RDU_IMAGE_TAG:-v${DYNAMO_VERSION}-rdu-hdi.1}"
 
 echo "=== Building $FULL_IMAGE ==="
 echo "    base:          $RHEL810_DEV_IMAGE"
-echo "    fast-coe:      $FAST_COE_COMMIT"
+echo "    vllm-rdu:      $VLLM_RDU_COMMIT"
 echo "    transformers:  $RDU_TRANSFORMERS_VERSION"
 echo ""
 
@@ -66,10 +66,9 @@ fi
 sudo -g docker /usr/bin/docker-wrapper build \
     "${BUILD_FLAGS[@]}" \
     --build-arg RHEL810_DEV_IMAGE="$RHEL810_DEV_IMAGE" \
-    --build-arg FAST_COE_COMMIT="$FAST_COE_COMMIT" \
     --build-arg RDU_TRANSFORMERS_VERSION="$RDU_TRANSFORMERS_VERSION" \
     --build-arg BRCM_ROCE_USERLAND_VERSION="$BRCM_ROCE_USERLAND_VERSION" \
-    --build-arg COE_TARGET_RUNTIME_VERSION_OVERRIDE="$COE_TARGET_RUNTIME_VERSION_OVERRIDE" \
+    --build-arg RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE="$RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE" \
     -t "$FULL_IMAGE" \
     -f "$REPO_ROOT/docker/rdu/Dockerfile" \
     "$REPO_ROOT"

@@ -1,42 +1,54 @@
-# RDU configuration for MiniMax-M2.7 FP8 on SN40L.
-# Schema: fast-coe's rdu_manifest.model_registry.Expert.from_config (server/rdu_manifest).
-# Copied verbatim (structure + values) from hdi's proven
-# fast-coe/server/vllm-ext/configs/minimax_m2.yaml (commit c3f335377) — same PEF,
-# same checkpoint, same dynamic-dims config. Unlike the old (retired) flat
-# RduConfig schema, pef_path/checkpoint_path are embedded here by name, not
-# injected at runtime by rdu_decode.sh.
+# RDU configuration for MiniMax-M2.7 FP8 on SN40L -- vllm-rdu's flat
+# RduConfig schema (rdu_executor/config.py's RduConfig.from_dict), NOT
+# fast-coe's rdu_manifest.model_registry.Expert schema (the pre-migration
+# nested pefs:/checkpoints:/experts: format).
+#
+# Same PEF, same checkpoint, same dynamic-dims config as fast-coe's old
+# config -- this is a schema translation, not a config change. Our
+# deployment only ever uses one PEF/checkpoint/batch-size variant (no
+# multi-expert routing, LoRA, or checkpoint sharing across PEFs), which is
+# exactly what this flat, single-Task schema covers. `bs: [2, 2, 1]` is a
+# degenerate Range (min=max=2) expressing the same fixed batch_size=2 as
+# the old schema's `batch_size: 2` -- our config doesn't use vllm-rdu's
+# dynamic-batch-size path (is_dynamic_bs stays unset/false).
+task_name: MiniMax-M2.7
+pef_path: "/import/ml-sc-scratch4/jayr/minimax_m2__full_layers_tp16_ssss_cg_ss_max_ss_tg_parallel_sdk_fp8_per_tensor/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608.pef"
+checkpoint_path: "/scratch/MiniMax-M2.7-FP8-RDU-packed"
+task: autoregressive
 
-pefs:
-  MINI_PEF_FP8: "/import/ml-sc-scratch4/jayr/minimax_m2__full_layers_tp16_ssss_cg_ss_max_ss_tg_parallel_sdk_fp8_per_tensor/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608.pef"
+# fast-coe's rdu_manifest.model_registry.Expert defaults `swappable=True`
+# (server/rdu_manifest/model_registry.py: `config.get('swappable', True)`)
+# and our old fast-coe config never overrode it -- so fast-coe always ran
+# with the PEF's weights DDR-backed and swappable into HBM on demand.
+# vllm-rdu's own RduConfig defaults `swappable_pef=False`. Per rdu_engine.md
+# ("Set swappable=True to store weights in DDR and swap into HBM on demand
+# (required for layered allocation)"), swappable=True is what makes
+# rdu_engine set up its DDR/BAR2 layered-allocation bookkeeping at all --
+# without it, our separate KV-cache DDR prefix-cache feature's own BAR2
+# allocation (`ddr_tensor(bar2=True, ...)`) has nothing to allocate against.
+# Set explicitly here to match fast-coe's real behavior rather than rely on
+# vllm-rdu's differing default.
+swappable_pef: true
 
-checkpoints:
-  MINI_CKPT_FP8: "/scratch/MiniMax-M2.7-FP8-RDU-packed"
+# Renamed from fast-coe's `num_tokens_at_a_time` -- vllm-rdu's own
+# RduConfig.from_dict still accepts that old name (with a deprecation
+# warning) but we use the current name directly since this is a new config.
+num_decode_cycles: 20
 
-experts:
-  MiniMax-M2.7:
-    -
-      batch_size: 2
-      pef: MINI_PEF_FP8
-      checkpoint: MINI_CKPT_FP8
-      num_tokens_at_a_time: 20
-      dynamic_dims:
-        enabled: true
-        prefill_seq:
-          name: SS_CG
-          min: 4096
-          max: 196608
-          step: 4096
-          set_at: runtime
-        decode_seq:
-          name: SS_TG
-          min: 4096
-          max: 196608
-          step: 4096
-          set_at: runtime
-        kv_seq:
-          name: SS_MAX
-          min: 4096
-          max: 196608
-          default: 196608
-          step: 4096
-          set_at: load
+dynamic_tensor: true
+is_dynamic_prefill: true
+
+bs: [2, 2, 1]
+
+prefill_dim_name: SS_CG
+prefill: [4096, 196608, 4096]
+prefill_set_at: runtime
+
+decode_dim_name: SS_TG
+decode: [4096, 196608, 4096]
+decode_set_at: runtime
+
+kv_dim_name: SS_MAX
+kv: [4096, 196608, 4096]
+kv_default: 196608
+kv_set_at: load
