@@ -35,6 +35,10 @@ if [[ "${1:-}" == "--inner" ]]; then
         [ -e "$dev" ] && RDMA_DEVICES="$RDMA_DEVICES --device $dev"
     done
 
+    # docker-run-wrapper (vnc+idc) auto-mounts /import,/scratch into the
+    # container -- plain `podman run` here does no such thing, and --net=host
+    # only shares the network namespace, not the filesystem. Every host path
+    # the container needs to read must be bind-mounted explicitly.
     echo "=== starting RDU decode (VCC/Podman) on $(hostname) $(date) ==="
     exec podman run --rm --net=host \
         --name "vcc-rdu-decode" \
@@ -43,6 +47,9 @@ if [[ "${1:-}" == "--inner" ]]; then
         $RDMA_DEVICES \
         --ulimit memlock=-1:-1 \
         --cap-add IPC_LOCK \
+        -v "$RDU_MODEL_PATH:$RDU_MODEL_PATH:ro" \
+        -v "$(dirname "$RDU_PEF_PATH"):$(dirname "$RDU_PEF_PATH"):ro" \
+        -v "$MODEL_CONFIG_PATH:$MODEL_CONFIG_PATH:ro" \
         -e CONTROL_PLANE_IP="$CONTROL_PLANE_IP" \
         -e ETCD_PORT="$ETCD_PORT" \
         -e NATS_PORT="$NATS_PORT" \

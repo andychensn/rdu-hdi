@@ -103,13 +103,16 @@ Stage it onto `RDU_HOST` at the path `vcc/model.env`'s `RDU_PEF_PATH` points
 to (or edit that variable to wherever you put it):
 
 ```bash
-ssh vc2-la-dc-b200-h1 mkdir -p /scratch/minimax-m2-BS2-pef  # on RDU_HOST, not GPU_HOST -- see below
+ssh vc2-la-dc-sn40-r1h1 mkdir -p /home/andyc/minimax-m2-BS2-pef  # on RDU_HOST, not GPU_HOST
 scp -3 \
   'vc2-la-dc-b200-h1:/home/jayr/move_to_rdu/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608/minimax_m2_minimal_pef_dir/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608.pef' \
-  'vc2-la-dc-sn40-r1h1:/scratch/minimax-m2-BS2-pef/'
+  'vc2-la-dc-sn40-r1h1:/home/andyc/minimax-m2-BS2-pef/'
 ```
 (`scp -3` routes GPU_HOST -> login node -> RDU_HOST in one hop; swap for two
-plain `scp`s through a local temp file if `-3` isn't available.)
+plain `scp`s through a local temp file if `-3` isn't available. Note:
+`RDU_HOST`'s `/scratch` (-> `/var/scratch`) is owned by a corporate-LDAP
+UID/group the local VCC account isn't in -- confirmed via a real permission
+denial -- hence `/home/andyc` instead of `/scratch` here.)
 
 ## Usage
 

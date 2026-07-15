@@ -37,6 +37,8 @@ if [[ "${1:-}" == "--inner" ]]; then
     # symlink resolves inside the CONTAINER's own rootfs and silently
     # fails) libcuda/libnvidia-ml/libnvidia-ptxjitcompiler out of the host's
     # driver install into a plain directory bind-mounted into the container.
+    [ -e "$GPU_MODEL_PATH" ] || { echo "ERROR: $GPU_MODEL_PATH not found on $(hostname)"; exit 1; }
+
     if [ ! -e "$GPU_DRIVER_LIBS_DIR/libcuda.so.1" ]; then
         echo "First run on $(hostname): copying NVIDIA driver userspace libs into $GPU_DRIVER_LIBS_DIR..."
         mkdir -p "$GPU_DRIVER_LIBS_DIR"
@@ -69,6 +71,10 @@ if [[ "${1:-}" == "--inner" ]]; then
     echo "    RoCE IP:    $GPU_ROCE_IP"
     echo "    devices:    CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 
+    # docker-run-wrapper/cuda-docker-run-wrapper (vnc+idc) auto-mount
+    # /import,/scratch into the container -- plain `podman run` here does
+    # not, and --net=host only shares the network namespace. Mount
+    # GPU_MODEL_PATH explicitly.
     exec podman run --rm --net=host \
         --name "vcc-gpu-prefill" \
         --entrypoint python3 \
@@ -78,6 +84,7 @@ if [[ "${1:-}" == "--inner" ]]; then
         $GPU_DEVICE_FLAGS \
         $RDMA_DEVICES \
         -v "$GPU_DRIVER_LIBS_DIR:$GPU_DRIVER_LIBS_DIR:ro" \
+        -v "$GPU_MODEL_PATH:$GPU_MODEL_PATH:ro" \
         -e "LD_LIBRARY_PATH=$GPU_DRIVER_LIBS_DIR" \
         -e "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES" \
         -e "ETCD_ENDPOINTS=http://$CONTROL_PLANE_IP:$ETCD_PORT" \
