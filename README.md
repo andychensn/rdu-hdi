@@ -216,10 +216,10 @@ The only genuinely external assets this stack reads from a network filesystem at
 
 1. **The model checkpoint** — split across two paths for the two sides: `MODEL` (`config/model.env`,
    `/import/...`) is read by GPU prefill and by RDU decode's tokenizer/config path (RDU loads
-   weights with `--load-format dummy`, it doesn't read tensor data from here); `MINI_CKPT_FP8`
+   weights with `--load-format dummy`, it doesn't read tensor data from here); `checkpoint_path`
    (`config/minimax_m2.yaml`, `/scratch/...`) is the actual weight source the RDU engine loads.
 2. **The PEF** — `PEF` (`config/model.env`, `/import/...`) and the identical path embedded as
-   `MINI_PEF_FP8` in `config/minimax_m2.yaml`.
+   `pef_path` in `config/minimax_m2.yaml`.
 3. **`BRCM_ROCELIB`** (`/import/it-tools/idc/fw/brcm/237/bcm_237.1.148.0a/drivers_linux/bnxt_rocelib`)
    — build-time only, staged into the build context and `COPY`'d into `docker/gpu/Dockerfile`; never
    referenced at container runtime.
@@ -273,7 +273,7 @@ entirely outside this repo's control, with no version pin or drift detection pos
   model topology (MiniMax-M2.7, TP16, specific dynamic-dims ranges). Produced by a separate PEF
   compilation pipeline this repo has no part of; swapping models requires someone to already have a
   working PEF for it.
-- **The FP8 checkpoint** (`MINI_CKPT_FP8` in `config/minimax_m2.yaml`) — SambaNova's packed/quantized
+- **The FP8 checkpoint** (`checkpoint_path` in `config/minimax_m2.yaml`) — SambaNova's packed/quantized
   weight format, produced by a separate conversion pipeline, not built or versioned here.
 - **The PEF and checkpoint paths are personal scratch space**, not a shared or versioned location
   (`PEF` sits under `/import/ml-sc-scratch4/jayr/...`). If that engineer's scratch space is ever
