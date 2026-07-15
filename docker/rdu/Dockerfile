@@ -71,6 +71,17 @@ ENV UCX_MODULE_DIR=/opt/rdu-ucx/lib/ucx
 # directly (27 .so files from the runtime 'graph' CMake target group).
 COPY rdu-runtime-install/lib/ /opt/bar2-runtime/lib/
 COPY rdu-runtime-install/preload/ /opt/bar2-runtime/preload/
+# memcopy/scatter-gather utility PEFs (see build/bar2.sh's stage_utility_pefs
+# -- staged here, not compiled from this build, see that function's own
+# comment for why). coe_api/rdu_engine's C++ default lookup for these is
+# ${INSTALL_ROOT:-/opt/sambaflow}/bazel-install/pefs/{name}.pef (confirmed
+# directly against coe_api's source, MemCopyApp.cpp/ScatterGatherApp.cpp) --
+# rdu_engine.always_load_memcopy_pef(True) (vllm-rdu's own hardcoded,
+# unconditional default) and coe_api's own unconditional scatter-gather-app
+# establishment both resolve here with zero vllm-rdu-side configuration
+# needed, once these files exist at this path.
+COPY rdu-runtime-install/pefs/ /opt/bar2-runtime/bazel-install/pefs/
+ENV INSTALL_ROOT=/opt/bar2-runtime
 # rdu_engine also transitively needs libmpi.so.12 (mpich) and a few abseil/
 # circllhist libs -- confirmed via `ldd` on the built .so that these are
 # genuinely required, not optional. They ship inside the rhel810-dev base
@@ -94,16 +105,11 @@ COPY docker/rdu/install-deps.sh /build/install-deps.sh
 RUN chmod +x /build/install-deps.sh && \
     RDU_TRANSFORMERS_VERSION="${RDU_TRANSFORMERS_VERSION}" /build/install-deps.sh
 
-# See config/versions.env's RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE /
-# RDU_ENGINE_ALWAYS_LOAD_MEMCOPY_PEF / RDU_ENGINE_MEMCOPY_BUNDLE_PATH
-# comments -- only affect this deployment's rdu_engine.initialize() call
+# See config/versions.env's RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE
+# comment -- only affects this deployment's rdu_engine.initialize() call
 # (rdu_executor/runtime.py), not other vllm-rdu consumers.
 ARG RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE
 ENV RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE="${RDU_ENGINE_TARGET_RUNTIME_VERSION_OVERRIDE}"
-ARG RDU_ENGINE_ALWAYS_LOAD_MEMCOPY_PEF
-ENV RDU_ENGINE_ALWAYS_LOAD_MEMCOPY_PEF="${RDU_ENGINE_ALWAYS_LOAD_MEMCOPY_PEF}"
-ARG RDU_ENGINE_MEMCOPY_BUNDLE_PATH
-ENV RDU_ENGINE_MEMCOPY_BUNDLE_PATH="${RDU_ENGINE_MEMCOPY_BUNDLE_PATH}"
 
 COPY docker/rdu/entrypoint.sh /opt/rdu-decode-entrypoint.sh
 RUN chmod +x /opt/rdu-decode-entrypoint.sh

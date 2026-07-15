@@ -1,18 +1,16 @@
 # RDU configuration for MiniMax-M2.7 FP8 on SN40L -- vllm-rdu's flat
 # RduConfig schema (rdu_executor/config.py's RduConfig.from_dict), NOT
-# fast-coe's rdu_manifest.model_registry.Expert schema (see
-# config/minimax_m2.fast-coe-legacy.yaml, kept for reference / rollback
-# during the fast-coe -> vllm-rdu migration).
+# fast-coe's rdu_manifest.model_registry.Expert schema (the pre-migration
+# nested pefs:/checkpoints:/experts: format).
 #
-# Same PEF, same checkpoint, same dynamic-dims config as
-# config/minimax_m2.fast-coe-legacy.yaml -- this is a schema translation,
-# not a config change. Our deployment only
-# ever uses one PEF/checkpoint/batch-size variant (no multi-expert routing,
-# LoRA, or checkpoint sharing across PEFs), which is exactly what this flat,
-# single-Task schema covers. `bs: [2, 2, 1]` is a degenerate Range
-# (min=max=2) expressing the same fixed batch_size=2 as the old schema's
-# `batch_size: 2` -- our config doesn't use vllm-rdu's dynamic-batch-size
-# path (is_dynamic_bs stays unset/false).
+# Same PEF, same checkpoint, same dynamic-dims config as fast-coe's old
+# config -- this is a schema translation, not a config change. Our
+# deployment only ever uses one PEF/checkpoint/batch-size variant (no
+# multi-expert routing, LoRA, or checkpoint sharing across PEFs), which is
+# exactly what this flat, single-Task schema covers. `bs: [2, 2, 1]` is a
+# degenerate Range (min=max=2) expressing the same fixed batch_size=2 as
+# the old schema's `batch_size: 2` -- our config doesn't use vllm-rdu's
+# dynamic-batch-size path (is_dynamic_bs stays unset/false).
 task_name: MiniMax-M2.7
 pef_path: "/import/ml-sc-scratch4/jayr/minimax_m2__full_layers_tp16_ssss_cg_ss_max_ss_tg_parallel_sdk_fp8_per_tensor/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608/minimax-m2__full_layers_TP16_ssSS_CG_SS_MAX_SS_TG_parallel_sdk_fp8_per_tensor_CoE_ckpt_sharing_BS2_SSSS_CG_max196608_SS_MAX_max196608_SS_TG_max196608.pef"
 checkpoint_path: "/scratch/MiniMax-M2.7-FP8-RDU-packed"
@@ -20,7 +18,7 @@ task: autoregressive
 
 # fast-coe's rdu_manifest.model_registry.Expert defaults `swappable=True`
 # (server/rdu_manifest/model_registry.py: `config.get('swappable', True)`)
-# and our fast-coe-legacy config never overrode it -- so fast-coe always ran
+# and our old fast-coe config never overrode it -- so fast-coe always ran
 # with the PEF's weights DDR-backed and swappable into HBM on demand.
 # vllm-rdu's own RduConfig defaults `swappable_pef=False`. Per rdu_engine.md
 # ("Set swappable=True to store weights in DDR and swap into HBM on demand

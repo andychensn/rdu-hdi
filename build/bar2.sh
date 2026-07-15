@@ -45,6 +45,9 @@
 #                                            and sambanova_coe_api-*.whl (coe_api compat shim)
 #   $REPO_ROOT/rdu-runtime-install/lib/   — libc_samba_runtime.so, libcpp_samba_runtime.so,
 #                                            libLlvm21.so (coe_api's runtime — not build-time — dep)
+#   $REPO_ROOT/rdu-runtime-install/pefs/  — memcopy/scatter-gather utility PEFs (staged from a
+#                                            pre-built copy, see stage_utility_pefs's own comment
+#                                            for why these aren't compiled here)
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
@@ -56,6 +59,11 @@ WHEELHOUSE="$REPO_ROOT/wheelhouse"
 RUNTIME_INSTALL="$REPO_ROOT/rdu-runtime-install"
 BAZEL_OUTPUT_BASE="/scratch/$USER/bazel-cache-rdu-hdi"
 BAZELISK_BIN="$REPO_ROOT/vendor/bin/bazelisk"
+
+# This cluster's RDUs are Taurus16/SN40+ (see build_runtime_graph_libs's own
+# `-rv ts16` comment) -- arch=sn40, vsnodes=16, interleave=1 in coe_api's own
+# {memcopy,scatter_gather}_<arch>_<vsnodes>_i<interleave> naming convention.
+UTILITY_PEF_NAMES=(memcopy_sn40_16_i1 scatter_gather_sn40_16_i1)
 
 MODE="${1:-both}"   # --fetch-only | --build-only | both
 
@@ -292,6 +300,56 @@ build_preload_libs() {
     done
 }
 
+# coe_api/rdu_engine unconditionally wants two utility PEFs at session init:
+# a "memcopy" PEF (rdu_engine.always_load_memcopy_pef -- vllm-rdu's own
+# runtime.py forces this True, unconditionally, matching rdu_engine's stated
+# use for swappable-checkpoint support) and a "scatter_gather" PEF (coe_api's
+# own C++ layer establishes this on every PEF add, completely outside any
+# Python-level toggle). Both are looked up at a hardcoded default path,
+# confirmed directly against coe_api's C++ source (MemCopyApp.cpp/
+# ScatterGatherApp.cpp): ${INSTALL_ROOT:-/opt/sambaflow}/bazel-install/pefs/
+# {memcopy,scatter_gather}_<arch>_<vsnodes>_i<interleave>.pef. Neither file
+# is model-specific -- they depend only on hardware topology (arch=sn40,
+# vsnodes=16, interleave=1 for this cluster's Taurus16/SN40+ RDUs), so any
+# deployment on the same topology can share identical copies.
+#
+# These ARE real, compileable artifacts in this same SambaNova/software repo
+# (bazel targets //frontend/nova/coe_api:create-memcopy-pef and
+# :create-scatter-gather-pef) -- but building them transitively pulls in this
+# repo's entire compiler backend (COMPILER_LIBS in compiler/build_defs.bzl:
+# prism, plasma-mlir, rail, etc.), which in turn requires building the
+# @pytorch external module. As of SOFTWARE_REPO_COMMIT above, that build
+# fails outright: `caffe2/perfkernels/common_avx2.cc`/`common_avx.cc` hit a
+# genuine "undeclared inclusion(s)" error in pytorch's own BUILD.bazel
+# (confirmed not a local sandboxing/flag issue -- reproduces identically with
+# --features=-layering_check). This is a real bug in the vendored pytorch
+# fork's build files for this pinned commit, orthogonal to anything in this
+# repo, and not something to patch blindly here.
+#
+# So: stage pre-built copies instead of compiling our own. UTILITY_PEF_SOURCE_DIR
+# (config/versions.env) is a BUILD-TIME-ONLY input -- unlike the old
+# RDU_ENGINE_MEMCOPY_BUNDLE_PATH env var this replaces, it is never passed
+# into the Docker image or read at container runtime. The files just get
+# copied into rdu-runtime-install/pefs/ here, then baked into the image
+# (docker/rdu/Dockerfile) at coe_api's own default lookup path -- so
+# vllm-rdu's `main` branch needs zero modification for this; its
+# unconditional always_load_memcopy_pef(True) and coe_api's unconditional
+# scatter-gather establishment both just resolve correctly out of the box.
+stage_utility_pefs() {
+    echo "=== Staging memcopy/scatter-gather utility PEFs $(date) ==="
+    [ -d "$UTILITY_PEF_SOURCE_DIR" ] || {
+        echo "ERROR: UTILITY_PEF_SOURCE_DIR ($UTILITY_PEF_SOURCE_DIR) not found or not a directory"
+        exit 1
+    }
+    mkdir -p "$RUNTIME_INSTALL/pefs"
+    for name in "${UTILITY_PEF_NAMES[@]}"; do
+        SRC="$UTILITY_PEF_SOURCE_DIR/$name.pef"
+        [ -f "$SRC" ] || { echo "ERROR: $SRC not found"; exit 1; }
+        cp -f "$SRC" "$RUNTIME_INSTALL/pefs/"
+        echo "  copied $name.pef to $RUNTIME_INSTALL/pefs/"
+    done
+}
+
 build_on_rdu_node() {
     if [ ! -d /opt/rh/gcc-toolset-13 ] && [ -z "${BAR2_IN_CONTAINER:-}" ]; then
         echo "=== gcc-toolset-13 not on bare metal — re-executing inside $RHEL810_DEV_IMAGE ==="
@@ -309,6 +367,8 @@ build_on_rdu_node() {
     build_runtime_graph_libs
     echo ""
     build_preload_libs
+    echo ""
+    stage_utility_pefs
     echo ""
     echo "=== BAR2 self-build COMPLETE $(date) ==="
 }
