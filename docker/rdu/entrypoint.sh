@@ -66,9 +66,17 @@ _NIXL_LIB="$_NIXL_LIBS_DIR"
 _NIXL_PLUGIN_DIR="$_NIXL_LIBS_DIR/plugins"
 
 # Requires --net=host (docker) / hostNetwork: true (k8s) to see the real
-# host RoCE interface.
-RDU_ROCE_IP_LOCAL=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep '^10\.17\.' | head -1 || true)
-RDU_ROCE_IP_LOCAL=${RDU_ROCE_IP_LOCAL:-$(hostname -I 2>/dev/null | awk '{print $1}')}
+# host RoCE interface. Autodetection below assumes the vnc+idc cluster's
+# 10.17.0.0/16 RoCE convention -- deployments on a different fabric subnet
+# (e.g. VCC's 172.16.0.0/24) must set RDU_ROCE_IP_OVERRIDE explicitly rather
+# than rely on the awk fallback, which just picks hostname -I's first
+# address with no guarantee it's the RoCE-fabric one.
+if [ -n "${RDU_ROCE_IP_OVERRIDE:-}" ]; then
+    RDU_ROCE_IP_LOCAL="$RDU_ROCE_IP_OVERRIDE"
+else
+    RDU_ROCE_IP_LOCAL=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep '^10\.17\.' | head -1 || true)
+    RDU_ROCE_IP_LOCAL=${RDU_ROCE_IP_LOCAL:-$(hostname -I 2>/dev/null | awk '{print $1}')}
+fi
 
 echo "=== RDU decode on $(hostname) $(date) ==="
 echo "    etcd:         http://$CONTROL_PLANE_IP:$ETCD_PORT"
