@@ -56,7 +56,8 @@ if [[ "${1:-}" == "--inner" ]]; then
     LMCACHE_CHUNK_SIZE=$((BLOCK_SIZE * 4))
 
     # Optional local-disk tier (see config/model.env's LMCACHE_MAX_LOCAL_DISK_GB
-    # comment) -- on by default; set LMCACHE_MAX_LOCAL_DISK_GB=0 to disable.
+    # comment) -- off by default (dead-weight disk growth repeatedly filled
+    # shared-scratch NFS quota); set LMCACHE_MAX_LOCAL_DISK_GB>0 to enable.
     # Mounted under GPU_CACHE_ROOT (NFS, already auto-mounted into the
     # container), so it survives a worker restart even though the CPU tier
     # (pure in-process memory) does not.
